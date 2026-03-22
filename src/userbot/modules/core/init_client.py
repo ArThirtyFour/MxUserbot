@@ -4,16 +4,13 @@ import sys
 from nio import AsyncClient
 from loguru import logger
 import asyncio
-# Импортируем реестр, чтобы обновить в нем переменные
 from ... import registry 
 
-# Глобальная переменная для хранения единственного экземпляра клиента
 _client_instance = None
 
 def init_client():
     global _client_instance
     
-    # Если клиент уже был создан ранее, просто возвращаем его
     if _client_instance is not None:
         return _client_instance
 
@@ -21,7 +18,6 @@ def init_client():
     bot_owner = config.matrix_config.owner
     access_token = config.matrix_config.access_token.get_secret_value()
     
-    # Читаем настройки из окружения
     join_on_invite = os.getenv('JOIN_ON_INVITE', 'False').lower() == 'true'
     invite_whitelist = os.getenv('INVITE_WHITELIST', '').split(',')
     if invite_whitelist == ['']: invite_whitelist = []
@@ -29,7 +25,6 @@ def init_client():
     if matrix_server and bot_owner and access_token:
         logger.info(f"Initializing Matrix Client for {bot_owner}...")
         
-        # Создаем клиента. ВАЖНО: передаем bot_owner как user_id
         client = AsyncClient(
             matrix_server, 
             bot_owner, 
@@ -37,16 +32,13 @@ def init_client():
         )
         client.access_token = access_token
         
-        # Записываем данные в глобальный реестр (src/userbot/registry.py)
-        # Чтобы другие части бота видели эти настройки
+
         registry.join_on_invite = join_on_invite
         registry.invite_whitelist = invite_whitelist
-        registry.owners = [bot_owner] # Теперь owners не будет пустым списком []
+        registry.owners = [bot_owner]
 
-        # Сохраняем экземпляр
         _client_instance = client
-        
-        # Загружаем модули (если нужно именно здесь)
+
         from .loader import Loader
         loader = Loader()
         asyncio.run(loader.register_all_modules())
