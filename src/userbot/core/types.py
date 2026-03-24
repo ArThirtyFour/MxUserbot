@@ -1,10 +1,81 @@
+__all__ = [
+    "Module"
+]
+
+
+
+
+import logging
+from abc import ABC, abstractmethod
+
+
+class ModuleCannotBeDisabled(Exception):
+    pass
+
+
+class Module(ABC):
+    __origin__ = "<unknown>"
+    __module_hash__ = "unknown"
+    __source__ = ""
+    
+    def _internal_init(self, name, allmodules , db,):
+        """Скрытый метод инициализации. Лоадер вызовет его сам!"""
+        self.name = name
+        self.db = db
+
+        self.enabled = True
+        self.allmodules = allmodules # Ссылка на менеджер модулей
+
+        self.logger = logging.getLogger("module " + self.name)
+    
+    def get(self, key, default=None):
+        return self.db.get(self.name, key, default)
+    
+    def set(self, key, value):
+        return self.db.set(self.name, key, value)
+
+    def matrix_start(self, bot):
+        self.logger.info('Starting..')
+
+    @abstractmethod
+    async def matrix_message(self, bot, room, event):
+        pass
+
+    def matrix_stop(self, bot):
+        self.logger.info('Stopping..')
+
+    async def matrix_poll(self, bot, pollcount):
+        pass
+
+    @abstractmethod
+    def help(self):
+        return 'A cool sekai module'
+
+    def long_help(self, bot=None, room=None, event=None, args=None):
+        return self.help()
+
+    def get_settings(self):
+        return {'enabled': getattr(self, "enabled", True)}
+
+    def set_settings(self, data):
+        if data.get('enabled') is not None:
+            self.enabled = data['enabled']
+
+    def enable(self):
+        self.enabled = True
+
+    def disable(self):
+        self.enabled = False
+
+
+
 from datetime import datetime, timedelta
 from random import randrange
 
-from .module import BotModule
 
 
-class PollingService(BotModule):
+
+class PollingService(Module):
     def __init__(self, name):
         super().__init__(name)
         self.known_ids = set()

@@ -5,11 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "loguru>=0.7.3",
     "matrix-nio>=0.25.2",
     "patchlib>=0.3.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
     "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.48",
     "yyaml>=0.0.1",
 ]

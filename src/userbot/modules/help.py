@@ -1,5 +1,6 @@
 from ..core import loader
 
+
 class MatrixModule(loader.Module):
 
     def __init__(self):
@@ -7,19 +8,6 @@ class MatrixModule(loader.Module):
         self.msg_users = False
         self.info = "More information at https://github.com/vranki/hemppa"
 
-    def get_settings(self):
-        data = super().get_settings()
-        data['msg_users'] = self.msg_users
-        data['info'] = self.info
-
-        print(data)
-        return data
-
-    def set_settings(self, data):
-        super().set_settings(data)
-        if data.get('msg_users'):
-            self.msg_users = data['msg_users']
-        self.info = data.get('info')
 
     def matrix_start(self, bot):
         super().matrix_start(bot)
@@ -62,7 +50,7 @@ class MatrixModule(loader.Module):
         else:
             msg = f'This is Hemppa {bot.version}, a generic Matrix bot. Known commands:\n'
 
-            for modulename, moduleobject in bot.modules.items():
+            for modulename, moduleobject in bot.all_modules.active_modules.items():
                 if moduleobject.enabled:
                     msg = msg + '- !' + modulename
                     try:
@@ -73,9 +61,8 @@ class MatrixModule(loader.Module):
         if self.msg_users:
             await bot.send_msg(event.sender, f'Chat with {bot.matrix_user}', msg)
         else:
-            from ..core.send_text import send_text
 
-            await send_text(bot, room, msg)
+            await bot.send_text(room, msg)
 
     def help(self):
         return 'Prints help on commands'
