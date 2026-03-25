@@ -7,6 +7,8 @@ from nio import InviteEvent, RoomMemberEvent, RoomMessageText, SyncError
 from .methods import Methods
 from .callback import CallBack
 from .loader import Loader
+from .security import SekaiSecurity
+
 
 if typing.TYPE_CHECKING:
     from ...database.methods import Database
@@ -34,6 +36,8 @@ class Bot(Methods):
         self.start_time = int(time.time() * 1000)
         self.jointime = None
 
+        self.security: SekaiSecurity = None # Добавь в init
+
 
     def setup_callbacks(self):
         """Метод для регистрации всех обработчиков событий"""
@@ -42,12 +46,34 @@ class Bot(Methods):
 
         cb_handler = CallBack(self)
         
-        self.client.add_event_callback(cb_handler.invite_cb, InviteEvent)
-        self.client.add_event_callback(cb_handler.memberevent_cb, RoomMemberEvent)
+        # self.client.add_event_callback(cb_handler.invite_cb, InviteEvent)
+        # self.client.add_event_callback(cb_handler.memberevent_cb, RoomMemberEvent)
+        
+        # if hasattr(cb_handler, "message_cb"):
+        #     self.client.add_event_callback(cb_handler.message_cb, RoomMessageText)
+
+
+        
+        self.client.add_event_callback(
+            self.security.gate(cb_handler.invite_cb), 
+            InviteEvent
+        )
+        
+        self.client.add_event_callback(
+            self.security.gate(cb_handler.memberevent_cb), 
+            RoomMemberEvent
+        )
         
         if hasattr(cb_handler, "message_cb"):
-            self.client.add_event_callback(cb_handler.message_cb, RoomMessageText)
+            self.client.add_event_callback(
+                self.security.gate(cb_handler.message_cb), 
+                RoomMessageText
+            )
 
+    async def setup_security(self):
+        """Инициализация безопасности"""
+        self.security = SekaiSecurity(self)
+        await self.security.init_security()
 
     async def save_settings(self):
         """Синхронизируем текущие настройки модулей в базу данных"""
@@ -66,7 +92,7 @@ class Bot(Methods):
         logger.info('Starting modules..')
         for name, instance in self.active_modules.items():
             if hasattr(instance, "set_settings"):
-                saved_settings = await self.db.get(name, "__config__", {})
+                saved_settings = await self.db.get(name, "__config__")
                 logger.debug(saved_settings)
                 instance.set_settings(saved_settings)
 
@@ -128,7 +154,6 @@ class Bot(Methods):
         return False
 
 
-
     def load_settings(bot, data):
         if not data:
             return
@@ -141,6 +166,7 @@ class Bot(Methods):
                         data['module_settings'][modulename])
                 except Exception:
                     logger.exception(f'unhandled exception {modulename}.set_settings')
+
 
     async def run(self):
             """Главный метод запуска бота"""
@@ -164,14 +190,17 @@ class Bot(Methods):
                     self.poll_task = asyncio.create_task(self.poll_timer())
 
                     data = self.get_account_data()
+                    print(data)
                     if data is None:
                         logger.info("Initializing account data for the first time...")
+                        print(1)
                         self.save_settings() 
 
                     await self.all_modules.register_all()
                     self.active_modules = self.all_modules.active_modules
 
                     await self.start()
+                    await self.setup_security()
 
                     self.setup_callbacks()
 
