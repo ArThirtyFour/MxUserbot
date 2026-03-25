@@ -27,8 +27,7 @@ class CallBack:
 
 
     async def invite_cb(self, room, event):
-        if event.server_timestamp < self.bot.start_time:
-            return
+
         room: MatrixRoom
         event: InviteEvent
 
@@ -38,7 +37,7 @@ class CallBack:
 
         if join_on_invite or await self.bot.is_owner(event):
             for attempt in range(3):
-                jointime = datetime.datetime.now()
+                self.bot.jointime = datetime.datetime.now()
                 result = await self.bot.join(room.room_id)
                 if type(result) == JoinError:
                     logger.error(f"Error joining room %s (attempt %d): %s", room.room_id, attempt, result.message)
@@ -58,59 +57,45 @@ class CallBack:
             logger.info(f"Membership event in {room.display_name} ({room.room_id}) with {room.member_count} members by '{event.sender}' (I am OWNER)- leaving room as i don't want to be left alone!")
             await self.bot.room_leave(room.room_id)
 
+
     async def message_cb(self, room, event):
-        if event.server_timestamp < self.bot.start_time:
-            return
+        print(event)
         # Ignore if asked to ignore
-        # if should_ignore_event(event):
-        #     if debug:
-        #         logger.debug('Ignoring event!')
-        #     return
-
+        if self.bot.should_ignore_event(event):
+            # logger.debug('Ignoring event!')
+            return
+        
         body = event.body
-        # # Figure out the command
-        # if not starts_with_command(body):
-        #     return
-
-        # if owners_only and not is_owner(event):
-        #     logger.info(f"Ignoring {event.sender}, because they're not an owner")
-        #     await send_text(room, "Sorry, only bot owner can run commands.", event=event)
-        #     return
-        jointime = None
-
-        # HACK to ignore messages for some time after joining.
-        if jointime:
-            if (datetime.datetime.now() - jointime).seconds < 5:
-                logger.info(f"Waiting for join delay, ignoring message: {body}")
-                return
-            jointime = None
-
-        command = body.split().pop(0)
-
-        command = re.sub(r'\W+', '', command)
+        
+        if not self.bot.starts_with_command(body):
+            return
+        
 
 
+        prefix = "!"
+        if event.body.startswith(prefix):
+            # Отрезаем префикс и делим на команду и аргументы
+            parts = event.body[len(prefix):].split(None, 1)
+            cmd_name = parts[0].lower()
+            args = parts[1] if len(parts) > 1 else ""
 
-        moduleobject = self.bot.active_modules.get(command) or self.bot.active_modules.get(self.bot.active_modules.get(command))
-        logger.debug(self.bot.active_modules.get(command))
-        logger.debug(moduleobject)
+            for mod in self.bot.all_modules.active_modules.values():
+                if not mod.enabled: continue
+                
+                if cmd_name in mod.commands:
+                    func = mod.commands[cmd_name]
+                    try:
+                        # Вызываем команду!
+                        await func(self.bot, room, event, args)
+                    except Exception as e:
+                        logger.exception(f"Error in command {cmd_name}")
+                        await self.bot.send_text(room, f"❌ Ошибка: {e}")
+                    return # Выходим: команда найдена и обработана
 
-        if moduleobject is not None:
-            if moduleobject.enabled:
+        # 3. Если это не команда, вызываем Watchers (matrix_message)
+        for mod in self.bot.all_modules.active_modules.values():
+            if mod.enabled:
                 try:
-                    await moduleobject.matrix_message(self.bot, room, event)
-                except CommandRequiresAdmin:
-                    await self.bot.send_text(room, f'Sorry, you need admin power level in this room to run that command.', event=event)
-                except CommandRequiresOwner:
-                    await self.bot.send_text(room, f'Sorry, only bot owner can run that command.', event=event)
+                    await mod.matrix_message(self.bot, room, event)
                 except Exception:
-                    await self.bot.send_text(room, f'Module {command} experienced difficulty: {sys.exc_info()[0]} - see log for details', event=event)
-                    logger.exception(f'unhandled exception in !{command}')
-        else:
-            logger.error(f"Unknown command: {command}")
-            # TODO Make this configurable
-            # await send_text(room,
-            #                     f"Sorry. I don't know what to do. Execute !help to get a list of available commands.")
-
-
-
+                    logger.exception(f"Error in watcher of {mod.name}")

@@ -12,61 +12,92 @@ from abc import ABC, abstractmethod
 class ModuleCannotBeDisabled(Exception):
     pass
 
+import inspect  
+
+import logging
+import inspect
+from abc import ABC, abstractmethod
+
+import logging
+import inspect
+from abc import ABC, abstractmethod
+
+import asyncio
+
+
+def command(name=None):
+    def decorator(func):
+        func.is_command = True
+        func.command_name = (name or func.__name__).lower()
+        return func
+    return decorator
+
+class ModuleConfig:
+    def __init__(self, db, module_name, **defaults):
+        self._db = db
+        self._module_name = module_name
+        self._cache = defaults.copy()
+        self._initialized = False
+
+    async def _load_from_db(self):
+        """Загружает все дефолтные ключи из БД при старте"""
+        for key in self._cache.keys():
+            val = await self._db.get(self._module_name, key, self._cache[key])
+            self._cache[key] = val
+        self._initialized = True
+
+    def __getitem__(self, key):
+        return self._cache.get(key)
+
+    def __setitem__(self, key, value):
+        self._cache[key] = value
+        asyncio.create_task(self._db.set(self._module_name, key, value))
+
+
 
 class Module(ABC):
     __origin__ = "<unknown>"
     __module_hash__ = "unknown"
     __source__ = ""
-    
-    def _internal_init(self, name, allmodules , db,):
-        """Скрытый метод инициализации. Лоадер вызовет его сам!"""
+
+    strings = {"name": "Unknown"}
+    config = {} 
+
+    async def _internal_init(self, name, db, allmodules):
         self.name = name
         self.db = db
-
+        self.allmodules = allmodules
         self.enabled = True
-        self.allmodules = allmodules # Ссылка на менеджер модулей
+        self.logger = logging.getLogger("module." + self.name)
+        
+        # Инициализируем конфиг
+        defaults = getattr(self, "config", {})
+        self.config = ModuleConfig(self.db, self.name, **defaults)
+        # Ждем загрузки данных из БД один раз
+        await self.config._load_from_db()
 
-        self.logger = logging.getLogger("module " + self.name)
-    
-    def get(self, key, default=None):
-        return self.db.get(self.name, key, default)
-    
-    def set(self, key, value):
-        return self.db.set(self.name, key, value)
+        # Кэшируем команды
+        self._commands = {}
+        for _, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            if getattr(method, 'is_command', False):
+                self._commands[method.command_name] = method
 
-    def matrix_start(self, bot):
-        self.logger.info('Starting..')
+
+    @property
+    def commands(self):
+        """Теперь это просто возвращает готовый словарь, не вызывая рекурсию"""
+        return self._commands
+
+    def get(self, key, default=None): return self.db.get(self.name, key, default)
+    def set(self, key, value): return self.db.set(self.name, key, value)
+
+    def matrix_start(self, bot): pass
+    async def matrix_message(self, bot, room, event): pass
+    def matrix_stop(self, bot): pass
+    async def matrix_poll(self, bot, pollcount): pass
 
     @abstractmethod
-    async def matrix_message(self, bot, room, event):
-        pass
-
-    def matrix_stop(self, bot):
-        self.logger.info('Stopping..')
-
-    async def matrix_poll(self, bot, pollcount):
-        pass
-
-    @abstractmethod
-    def help(self):
-        return 'A cool sekai module'
-
-    def long_help(self, bot=None, room=None, event=None, args=None):
-        return self.help()
-
-    def get_settings(self):
-        return {'enabled': getattr(self, "enabled", True)}
-
-    def set_settings(self, data):
-        if data.get('enabled') is not None:
-            self.enabled = data['enabled']
-
-    def enable(self):
-        self.enabled = True
-
-    def disable(self):
-        self.enabled = False
-
+    def help(self): return 'A cool sekai module'
 
 
 from datetime import datetime, timedelta

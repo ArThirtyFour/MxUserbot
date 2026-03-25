@@ -1,68 +1,27 @@
-from ..core import loader
+from ..core.types import Module, command
+
+class MatrixModule(Module):
+    """Модуль помощи"""
+
+    config = {
+        "msg_users": False,
+        "info_text": "сын проститутки <h>"
+    }
+
+    @command(name="help")
+    async def help_cmd(self, bot, room, event, args):
+        """[module] - Показать помощь"""
+        
+        # Общая помощь
+        msg = "<b>Список команд:</b>\n"
+        for name, mod in bot.all_modules.active_modules.items():
+            msg += f"▫️ <code>!{name}</code> - {mod.help()}\n"
+        
+        msg += f"\n<i>{self.config['info_text']}</i>"
 
 
-class MatrixModule(loader.Module):
+        await bot.send_text(room, msg)
 
-    def __init__(self):
-
-        self.msg_users = False
-        self.info = "More information at https://github.com/vranki/hemppa"
-
-
-    def matrix_start(self, bot):
-        super().matrix_start(bot)
-
-    
-
-    async def matrix_message(self, bot, room, event):
-
-        args = event.body.split(None, 2)
-        cmd = args.pop(0)
-        if cmd == '!sethelp':
-            bot.must_be_owner(event)
-            if args[0].lower() in ['msg_users', 'msg-users', 'msg']:
-                if args[1].lower() in ['true', '1', 'yes', 'y']:
-                    self.msg_users = True
-                    msg = '!help will now message users instead of posting to the room'
-                else:
-                    self.msg_users = False
-                    msg = '!help will now post to the room instead of messaging users'
-                bot.save_settings()
-            elif args[0].lower() in ['info']:
-                self.info = args[1] or "More information at https://github.com/vranki/hemppa"
-                msg = '!help info string set'
-                bot.save_settings()
-            else:
-                await bot.send_text(room, f'Not a !help setting: {args[0]}')
-            return
-
-        elif len(args) == 1:
-            msg = ''
-            modulename = args.pop(0)
-            moduleobject = bot.modules.get(modulename)
-            if not moduleobject.enabled:
-                msg += f'{modulename} is disabled\n'
-            try:
-                msg += moduleobject.long_help(bot=bot, room=room, event=event, args=args)
-            except AttributeError:
-                msg += f'{modulename} has no help'
-
-        else:
-            msg = f'This is Hemppa {bot.version}, a generic Matrix bot. Known commands:\n'
-
-            for modulename, moduleobject in bot.all_modules.active_modules.items():
-                if moduleobject.enabled:
-                    msg = msg + '- !' + modulename
-                    try:
-                        msg = msg + ': ' + moduleobject.help() + '\n'
-                    except AttributeError:
-                        pass
-            msg = msg + '\n' + self.info
-        if self.msg_users:
-            await bot.send_msg(event.sender, f'Chat with {bot.matrix_user}', msg)
-        else:
-
-            await bot.send_text(room, msg)
 
     def help(self):
-        return 'Prints help on commands'
+        return "Помощь по всем командам"

@@ -29,6 +29,7 @@ class Bot(Methods):
         self.poll_task = None
         self.stopping = False
         self.start_time = int(time.time() * 1000)
+        self.jointime = None
 
     def setup_callbacks(self):
         """Метод для регистрации всех обработчиков событий"""
@@ -62,8 +63,12 @@ class Bot(Methods):
         """Запуск модулей и загрузка их конфигурации"""
         logger.info('Starting modules..')
         for name, instance in self.active_modules.items():
+            print(666666)
+            logger.debug(name, instance)
+            logger.debug(hasattr(instance, "set_settings"))
             if hasattr(instance, "set_settings"):
                 saved_settings = await self.db.get(name, "__config__", {})
+                logger.debug(saved_settings)
                 instance.set_settings(saved_settings)
 
             if getattr(instance, "enabled", True):
@@ -102,6 +107,31 @@ class Bot(Methods):
 
 
 
+
+
+# ТУТ ВРЕМЕННО ВСПОМОГАТЕЛЬНЫЕ
+    def starts_with_command(self, body):
+        """Checks if body starts with ! and has one or more letters after it"""
+        import re
+        return re.match(r"^!\w.*", body) is not None
+
+
+    def should_ignore_event(self, event):
+        if event.sender == self.client.user_id:
+            return True
+
+        # event.server_timestamp приходит в миллисекундах
+        if hasattr(event, 'server_timestamp'):
+            if event.server_timestamp < self.start_time:
+                return True
+
+        if "org.vranki.hemppa.ignore" in event.source.get('content', {}):
+            return True
+
+        return False
+
+
+
     def load_settings(bot, data):
         print(1)
         if not data:
@@ -118,7 +148,6 @@ class Bot(Methods):
 
     async def run(self):
             """Главный метод запуска бота"""
-            # 1. Первичная синхронизация
             sync_response = await self.client.sync()
             
             if type(sync_response) == SyncError:
@@ -136,16 +165,19 @@ class Bot(Methods):
                         await self.client.room_leave(roomid)
 
                 if self.client.logged_in:
-                    await self.start()
                     self.poll_task = asyncio.create_task(self.poll_timer())
 
                     data = self.get_account_data()
+                    logger.debug(data)
                     if data is None:
                         logger.info("Initializing account data for the first time...")
-                        self.save_settings(self) 
+                        self.save_settings() 
 
                     await self.all_modules.register_all()
                     self.active_modules = self.all_modules.active_modules
+
+                    await self.start()
+
                     self.setup_callbacks()
 
                     if join_on_invite:

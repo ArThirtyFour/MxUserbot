@@ -79,7 +79,7 @@ class Loader:
                 instance = cls(short_name)
 
             if hasattr(instance, '_internal_init'):
-                instance._internal_init(short_name, self.db, self)
+                await instance._internal_init(short_name, self.db, self)
 
             self._apply_metadata(instance, spec)
             
@@ -91,3 +91,4 @@ class Loader:
         except Exception as e:
             logger.exception(f"Ошибка в модуле {module_name}: {e}")
             return None
+
