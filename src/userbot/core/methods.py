@@ -14,6 +14,11 @@ from ...settings import config
 from .exceptions import handle_error_response
 
 
+from io import BytesIO
+import mimetypes
+import os
+from PIL import Image
+from nio import UploadResponse, UploadError
 import hashlib
 
 from nio import (
@@ -106,48 +111,112 @@ class Methods:
         await self.room_send(room.room_id, event, 'm.room.message', locationmsg)
 
 
+
+
+    async def upload_file(self, file, filename=None):
+        import mimetypes
+        from io import BytesIO
+        import os
+
+        if isinstance(file, str):
+            if not os.path.exists(file):
+                raise FileNotFoundError(file)
+
+            filename = filename or os.path.basename(file)
+            mime_type, _ = mimetypes.guess_type(file)
+
+            with open(file, "rb") as f:
+                data = f.read()
+        else:
+            data = file
+            mime_type = "application/octet-stream"
+            filename = filename or "file"
+
+        size = len(data)
+
+        # вот тут ты раньше облажался
+        bio = BytesIO(data)
+
+        resp, _ = await self.client.upload(
+            bio,  # теперь это валидно
+            content_type=mime_type or "application/octet-stream",
+            filename=filename,
+            filesize=size  # <-- КРИТИЧНО
+        )
+
+        if isinstance(resp, UploadResponse):
+            return resp.content_uri, {
+                "mimetype": mime_type,
+                "size": size
+            }
+
+        if isinstance(resp, UploadError):
+            raise Exception(f"Upload failed: {resp.message}")
+
+        return None, None
+            
+
+
     async def send_image(
             self,
             room,
-            url,
-            body,
+            image, # Может быть путем, байтами или mxc://
+            body="Image",
             event=None,
-            mimetype=None,
-            width=None,
-            height=None,
-            size=None
+            **kwargs
     ):
         """
-
-        :param room: A MatrixRoom the image should be send to
-        :param url: A MXC-Uri https://matrix.org/docs/spec/client_server/r0.6.0#mxc-uri
-        :param body: A textual representation of the image
-        :param mimetype: The mimetype of the image
-        :param width: Width in pixel of the image
-        :param height: Height in pixel of the image
-        :param size: Size in bytes of the image
-        :return:
+        Отправка изображения (локального или по ссылке)
         """
+        mxc_url = image
+        info = {}
+
+        if not str(image).startswith("mxc://"):
+            mxc_url, info = await self.upload_file(image)
+            if not mxc_url:
+                return logger.error("Failed to upload image")
+
+        info.update(kwargs)
+
         msg = {
-            "url": url,
+            "url": mxc_url,
             "body": body,
             "msgtype": "m.image",
-            "info": {
-                "thumbnail_info": None,
-                "thumbnail_url": url,
-            },
+            "info": info
         }
 
-        if mimetype:
-            msg["info"]["mimetype"] = mimetype
-        if width:
-            msg["info"]["w"] = width
-        if height:
-            msg["info"]["h"] = height
-        if size:
-            msg["info"]["size"] = size
+        return await self.room_send(room.room_id, event, 'm.room.message', msg)
 
-        logger.debug(f"send image room message: {msg}")
+
+
+
+    async def send_video(
+            self,
+            room,
+            video,
+            body="Video",
+            event=None,
+            **kwargs
+    ):
+        """
+        Отправка видео (локального или по ссылке)
+        """
+        mxc_url = video
+        info = {}
+
+        if not str(video).startswith("mxc://"):
+            mxc_url, info = await self.upload_file(video)
+            if not mxc_url:
+                return logger.error("Failed to upload video")
+
+        info.update(kwargs)
+
+        msg = {
+            "url": mxc_url,
+            "body": body,
+            "msgtype": "m.video",
+            "info": info
+        }
 
         return await self.room_send(room.room_id, event, 'm.room.message', msg)
 
