@@ -1,28 +1,17 @@
-__all__ = [
-    "Module"
-]
-
-
-
-
-import logging
-from abc import ABC, abstractmethod
-
-
-class ModuleCannotBeDisabled(Exception):
-    pass
-
-import inspect  
-
 import logging
 import inspect
-from abc import ABC, abstractmethod
-
-import logging
-import inspect
-from abc import ABC, abstractmethod
-
 import asyncio
+from functools import wraps
+from abc import ABC, abstractmethod
+
+
+def get_commands(cls):
+    cmds = {}
+    for attr_name in dir(cls):
+        method = getattr(cls, attr_name)
+        if callable(method) and getattr(method, 'is_command', False):
+            cmds[method.command_name] = method
+    return cmds
 
 
 def command(name=None):
@@ -32,19 +21,75 @@ def command(name=None):
         return func
     return decorator
 
+
+def tds(cls):
+    """Decorator that makes triple-quote docstrings translatable"""
+    if not hasattr(cls, 'strings'):
+        cls.strings = {}
+
+    @wraps(cls._internal_init)
+    async def _internal_init(self, *args, **kwargs):
+        def proccess_decorators(mark: str, obj: str):
+            nonlocal self
+            for attr in dir(func_):
+                if (
+                    attr.endswith("_doc")
+                    and len(attr) == 6
+                    and isinstance(getattr(func_, attr), str)
+                ):
+                    var = f"strings_{attr.split('_')[0]}"
+                    if not hasattr(self, var):
+                        setattr(self, var, {})
+
+                    getattr(self, var).setdefault(f"{mark}{obj}", getattr(func_, attr))
+
+        for command_, func_ in get_commands(cls).items():
+            proccess_decorators("_cmd_doc_", command_)
+            try:
+                func_.__doc__ = self.strings[f"_cmd_doc_{command_}"]
+            except AttributeError:
+                func_.__func__.__doc__ = self.strings[f"_cmd_doc_{command_}"]
+
+        self.__doc__ = self.strings.get("_cls_doc", self.__doc__)
+
+        return await self._internal_init._old_(self, *args, **kwargs)
+
+    _internal_init._old_ = cls._internal_init
+    cls._internal_init = _internal_init
+
+    for command_, func in get_commands(cls).items():
+        cmd_doc = func.__doc__
+        if cmd_doc:
+            cls.strings.setdefault(f"_cmd_doc_{command_}", inspect.cleandoc(cmd_doc))
+
+    cls_doc = cls.__dict__.get('__doc__') # Обходим наследование от ABC
+    if cls_doc:
+        cls.strings.setdefault("_cls_doc", inspect.cleandoc(cls_doc))
+
+    def _require(key: str, error_msg: str):
+        """Проверяет наличие и непустоту ключа в словаре strings"""
+        if not str(cls.strings.get(key, "")).strip():
+            raise ValueError(f"❌ {error_msg}")
+
+    _require("name", f"Модуль '{cls.__name__}' ОБЯЗАН иметь ключ 'name' в strings!")
+    _require("_cls_doc", f"Модуль '{cls.__name__}' ОБЯЗАН иметь docstring или ключ '_cls_doc' в strings!")
+
+    for cmd_name in get_commands(cls).keys():
+        _require(f"_cmd_doc_{cmd_name}", f"Команда '!{cmd_name}' ОБЯЗАНА иметь docstring!")
+
+    return cls
+
+
 class ModuleConfig:
     def __init__(self, db, module_name, **defaults):
         self._db = db
         self._module_name = module_name
         self._cache = defaults.copy()
-        self._initialized = False
 
     async def _load_from_db(self):
-        """Загружает все дефолтные ключи из БД при старте"""
         for key in self._cache.keys():
             val = await self._db.get(self._module_name, key, self._cache[key])
             self._cache[key] = val
-        self._initialized = True
 
     def __getitem__(self, key):
         return self._cache.get(key)
@@ -54,14 +99,13 @@ class ModuleConfig:
         asyncio.create_task(self._db.set(self._module_name, key, value))
 
 
-
 class Module(ABC):
     __origin__ = "<unknown>"
     __module_hash__ = "unknown"
     __source__ = ""
 
-    strings = {"name": "Unknown"}
-    config = {} 
+    config = {}
+    strings = {}
 
     async def _internal_init(self, name, db, allmodules):
         self.name = name
@@ -70,22 +114,25 @@ class Module(ABC):
         self.enabled = True
         self.logger = logging.getLogger("module." + self.name)
         
-        # Инициализируем конфиг
+        self.strings = getattr(self.__class__, "strings", {}).copy()
+
+        self.friendly_name = self.strings.get("name") or self.config.get("name") or self.__class__.__name__
+
         defaults = getattr(self, "config", {})
         self.config = ModuleConfig(self.db, self.name, **defaults)
-        # Ждем загрузки данных из БД один раз
         await self.config._load_from_db()
 
-        # Кэшируем команды
-        self._commands = {}
-        for _, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            if getattr(method, 'is_command', False):
-                self._commands[method.command_name] = method
 
+        self._commands = {}
+        for cmd_name, func in get_commands(self.__class__).items():
+            self._commands[cmd_name] = getattr(self, func.__name__)
+    
+    def help(self):
+        """Возвращает основную документацию модуля"""
+        return self.strings.get("_cls_doc", "Описание отсутствует")
 
     @property
     def commands(self):
-        """Теперь это просто возвращает готовый словарь, не вызывая рекурсию"""
         return self._commands
 
     def get(self, key, default=None): return self.db.get(self.name, key, default)
@@ -95,10 +142,6 @@ class Module(ABC):
     async def matrix_message(self, bot, room, event): pass
     def matrix_stop(self, bot): pass
     async def matrix_poll(self, bot, pollcount): pass
-
-    @abstractmethod
-    def help(self): return 'A cool sekai module'
-
 
 from datetime import datetime, timedelta
 from random import randrange

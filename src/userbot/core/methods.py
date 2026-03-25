@@ -168,9 +168,11 @@ class Methods:
         if bool(re.search(r'<[^>]+>', str(body))):
             plaintext = re.sub(r'<[^>]+>', '', str(body))
             
+
+            html_body = str(body).replace("\n", "<br>")
             return await self.send_html(
                 room=room,
-                html=body,
+                html=html_body,
                 plaintext=plaintext,
                 event=event,
                 msgtype=msgtype,
@@ -200,7 +202,6 @@ class Methods:
             except (AttributeError, KeyError):
                 pass
 
-        # Вызываем метод клиента, а не рекурсивно себя
         return await self.client.room_send(
             room_id=room_id,
             message_type=msgtype,
