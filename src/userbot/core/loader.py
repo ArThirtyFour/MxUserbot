@@ -3,17 +3,14 @@ import typing
 import shutil
 import inspect
 import hashlib
-import importlib
+import asyncio
 import importlib.util
 from functools import wraps
-
 from pathlib import Path
 from loguru import logger
 
-from .types import Module
-from . import utils 
-
-
+from . import utils
+from .types import Module 
 _MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
 
 
@@ -88,35 +85,104 @@ def tds(cls):
     return cls
 
 
+
 class Loader:
     def __init__(self, db_wrapper):
         self.db = db_wrapper 
         self.active_modules: typing.Dict[str, object] = {}
-        
         self.module_path = Path(__file__).resolve().parents[2] / 'userbot' / 'modules'
-        self.uv_path = shutil.which(cmd="uv")
+        
+        self._background_tasks: typing.Set[asyncio.Task] = set()
 
-    async def register_all(self) -> None:
-        """Загрузить все модули из папки extra"""
-        if not os.path.exists(self.module_path):
-            os.makedirs(self.module_path)
 
-        modulefiles = [
-            str(self.module_path / mod) 
-            for mod in os.listdir(self.module_path) 
-            if mod.endswith(".py") and not mod.startswith("_")
+    async def register_all(self, bot) -> None:
+        """Сканирует папку и запускает регистрацию модулей"""
+        if not self.module_path.exists():
+            self.module_path.mkdir(parents=True, exist_ok=True)
+
+        module_files = [
+            f for f in self.module_path.iterdir() 
+            if f.suffix == ".py" and not f.name.startswith("_")
+        ]
+
+        if not module_files:
+            logger.warning("Папка модулей пуста.")
+            return
+
+        import_tasks = [
+            self.register_module(path, bot) 
+            for path in module_files
         ]
         
-        for mod_path in modulefiles:
-            stem = Path(mod_path).stem
-            module_name = f'src.userbot.modules.{stem}'
+        await asyncio.gather(*import_tasks, return_exceptions=True)
+        logger.info(f"Загружено модулей: {len(self.active_modules)}. Ожидание фоновой активации...")
+
+    async def register_module(self, path: Path, bot):
+        """Низкоуровневый импорт файла и создание инстанса"""
+        module_name = f"src.userbot.modules.{path.stem}"
+        
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, str(path))
+            if not spec or not spec.loader:
+                return
+
+            module = importlib.util.module_from_spec(spec)
+            if "." in module_name:
+                module.__package__ = module_name.rsplit('.', 1)[0]
             
-            spec = importlib.util.spec_from_file_location(module_name, mod_path)
-            if spec:
-                await self.register_module(spec, module_name)
+            spec.loader.exec_module(module)
+
+            if not hasattr(module, 'MatrixModule'):
+                return
+
+            cls = getattr(module, 'MatrixModule')
+            short_name = path.stem
+            
+            try:
+                instance = cls()
+            except TypeError:
+                instance = cls(short_name)
+            
+            instance._is_ready = False
+
+
+            if hasattr(instance, '_internal_init'):
+                await instance._internal_init(short_name, self.db, self)
+
+            self._apply_metadata(instance, spec)
+            self.active_modules[short_name] = instance
+
+            startup_task = asyncio.create_task(self._finalize_module_startup(instance, bot, short_name))
+            self._background_tasks.add(startup_task)
+            startup_task.add_done_callback(self._background_tasks.discard)
+
+            logger.debug(f"Импортирован файл модуля: {short_name}")
+
+        except Exception:
+            logger.exception(f"Ошибка при импорте файла {path.name}")
+
+
+    async def _finalize_module_startup(self, instance, bot, name):
+        """Фоновый метод: загрузка настроек и запуск _matrix_start"""
+        try:
+            # Загрузка конфига из БД
+            if hasattr(instance, "set_settings"):
+                saved_settings = await self.db.get(name, "__config__")
+                if saved_settings:
+                    instance.set_settings(saved_settings)
+
+            if getattr(instance, "enabled", True) and hasattr(instance, "_matrix_start"):
+                await instance._matrix_start(bot)
+            
+            instance._is_ready = True
+            
+            logger.success(f"Модуль {name} успешно запущен в фоне.")
+        except Exception:
+            logger.exception(f"Ошибка при запуске модуля {name}")
+
 
     def _apply_metadata(self, instance, spec):
-        """Запись исходника и хэша"""
+        """Запись метаданных (исходник, хэш)"""
         try:
             with open(spec.origin, 'r', encoding='utf-8') as f:
                 source = f.read()
@@ -126,40 +192,3 @@ class Loader:
             _MODULE_NAME_BY_HASH[instance.__module_hash__] = instance.__class__.__name__
         except Exception:
             instance.__module_hash__ = "unknown"
-
-    async def register_module(self, spec, module_name):
-        """Регистрация одиночного модуля"""
-
-        importlib.invalidate_caches()
-        try: 
-            module = importlib.util.module_from_spec(spec)
-            if "." in module_name:
-                module.__package__ = module_name.rsplit('.', 1)[0]
-
-            spec.loader.exec_module(module)
-            
-            if not hasattr(module, 'MatrixModule'):
-                return None
-
-            cls = getattr(module, 'MatrixModule')
-            short_name = module_name.split('.')[-1]
-            
-            try:
-                instance = cls() 
-            except TypeError:
-                instance = cls(short_name)
-
-            if hasattr(instance, '_internal_init'):
-                await instance._internal_init(short_name, self.db, self)
-
-            self._apply_metadata(instance, spec)
-            
-            self.active_modules[short_name] = instance
-            
-            logger.success(f"Модуль {short_name} загружен. Hash: {instance.__module_hash__[:8]}")
-            return instance
-
-        except Exception as e:
-            logger.exception(f"Ошибка в модуле {module_name}: {e}")
-            return None
-
