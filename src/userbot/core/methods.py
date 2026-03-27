@@ -29,6 +29,16 @@ from nio import (
 from ...settings import config
 from .exceptions import handle_error_response
 
+import os
+import asyncio
+import mimetypes
+import typing
+from io import BytesIO
+from pathlib import Path
+from PIL import Image
+from nio import UploadResponse, UploadError
+from loguru import logger
+
 
 class Methods:
     def __init__(self, bot):
@@ -115,44 +125,47 @@ class Methods:
 
     async def upload_file(
         self,
-        file: str,
-        filename: str =None
-    ) -> None:
-        if isinstance(file, str):
-            if not os.path.exists(file):
-                raise FileNotFoundError(file)
+        file: typing.Union[str, bytes, Path],
+        filename: typing.Optional[str] = None
+    ) -> typing.Tuple[typing.Optional[str], dict]:
 
-            filename = filename or os.path.basename(file)
-            mime_type, _ = mimetypes.guess_type(file)
-
-            with open(file, "rb") as f:
-                data = f.read()
+        if isinstance(file, (str, Path)):
+            path = Path(file)
+            data = await asyncio.to_thread(path.read_bytes)
+            filename = filename or path.name
         else:
             data = file
-            mime_type = "application/octet-stream"
-            filename = filename or "file"
+            filename = filename or "image.png"
 
-        size = len(data)
-
-        bio = BytesIO(data)
+        mime_type, _ = mimetypes.guess_type(filename)
+        
+        width, height = 0, 0
+        try:
+            def _probe():
+                with Image.open(BytesIO(data)) as img:
+                    return img.width, img.height, img.format.lower()
+            
+            width, height, fmt = await asyncio.to_thread(_probe)
+            if not mime_type or not mime_type.startswith("image/"):
+                mime_type = f"image/{fmt}"
+        except Exception:
+            mime_type = mime_type or "application/octet-stream"
 
         resp, _ = await self.client.upload(
-            bio,
-            content_type=mime_type or "application/octet-stream",
+            BytesIO(data),
+            content_type=mime_type,
             filename=filename,
-            filesize=size
+            filesize=len(data)
         )
 
         if isinstance(resp, UploadResponse):
             return resp.content_uri, {
                 "mimetype": mime_type,
-                "size": size
+                "size": len(data),
+                "w": width,
+                "h": height
             }
-
-        if isinstance(resp, UploadError):
-            raise Exception(f"Upload failed: {resp.message}")
-
-        return None, None
+        return None, {}
 
 
     async def send_image(
