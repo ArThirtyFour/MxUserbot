@@ -59,37 +59,45 @@ class CallBack:
 
 
     async def message_cb(self, room, event):
-        print(1)
+            body = event.body
+            if self.bot.should_ignore_event(event):
+                return
 
-        
-        body = event.body
-        if not self.bot.starts_with_command(body):
-            return
+            if body.startswith("> ") and "\n\n" in body:
+                real_body = body.split("\n\n", 1)[-1].strip()
+            else:
+                real_body = body.strip()
 
-
-        prefix = "!"
-        if event.body.startswith(prefix):
-            parts = event.body[len(prefix):].split(None, 1)
-            cmd_name = parts[0].lower()
-            args = parts[1] if len(parts) > 1 else ""
+            if not self.bot.starts_with_command(real_body):
+                for mod in self.bot.all_modules.active_modules.values():
+                    if mod.enabled:
+                        try: await mod._matrix_message(self.bot, room, event)
+                        except Exception: logger.exception(f"Error in watcher")
+                return
 
             for mod in self.bot.all_modules.active_modules.values():
-                if not mod.enabled: continue
-                
-                if cmd_name in mod.commands:
-                    func = mod.commands[cmd_name]
+                if mod.enabled:
                     try:
-                        # Вызываем команду!
-                        await func(self.bot, room, event, args)
-                    except Exception as e:
-                        logger.exception(f"Error in command {cmd_name}")
-                        await self.bot.send_text(room, f"❌ Ошибка: {e}")
-                    return
+                        await mod._matrix_message(self.bot, room, event)
+                    except Exception:
+                        logger.exception(f"Error in watcher of {mod.name}")
 
-        # 3. Если это не команда, вызываем Watchers (matrix_message)
-        for mod in self.bot.all_modules.active_modules.values():
-            if mod.enabled:
-                try:
-                    await mod.matrix_message(self.bot, room, event)
-                except Exception:
-                    logger.exception(f"Error in watcher of {mod.name}")
+            prefix = "!"
+            if real_body.startswith(prefix):
+                parts = real_body[len(prefix):].split(None, 1)
+                cmd_name = parts[0].lower()
+                args = parts[1] if len(parts) > 1 else ""
+
+                for mod in self.bot.all_modules.active_modules.values():
+                    if not mod.enabled: continue
+                    
+                    if cmd_name in mod.commands:
+                        func = mod.commands[cmd_name]
+                        try:
+                            await func(self.bot, room, event, args)
+                        except Exception as e:
+                            logger.exception(f"Error in command {cmd_name}")
+                            await self.bot.send_text(room, f"❌ Ошибка: {e}")
+                        return
+                    
+            
