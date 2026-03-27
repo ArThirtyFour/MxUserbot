@@ -3,7 +3,7 @@ import asyncio
 import typing
 
 from loguru import logger
-from nio import InviteEvent, RoomMemberEvent, RoomMessageText, SyncError, AsyncClient
+from nio import InviteEvent, RoomMemberEvent, RoomMessage, SyncError, AsyncClient
 
 from .methods import Methods
 from .callback import CallBack
@@ -33,6 +33,7 @@ class Bot(Methods):
         self.stopping = False
         self.start_time = int(time.time() * 1000)
         self.jointime = None
+        self.prefixes = ["!"]
 
         self.security: SekaiSecurity = None # Добавь в init
 
@@ -65,7 +66,7 @@ class Bot(Methods):
         if hasattr(cb_handler, "message_cb"):
             self.client.add_event_callback(
                 self.security.gate(cb_handler.message_cb), 
-                RoomMessageText
+                RoomMessage
             )
 
     async def setup_security(self):
@@ -109,14 +110,32 @@ class Bot(Methods):
             await asyncio.sleep(10)
 
 
+    async def get_args(self, event):
+        cmd_part = event.body[len(self.prefixes):]
+        parts = cmd_part.split(None, 1)
+        args = parts[1] if len(parts) > 1 else ""
+
+        return args
+
+    async def load_prefixes(self):
+        """Загрузка префиксов из БД при старте"""
+        db_result = await self.db.get("set_prefix", "prefix", None)
+
+        if db_result:
+            self.prefixes = db_result.value
+        else:
+            pass
+
+        logger.info(f"Загружены префиксы: {self.prefixes}")
 
 
-
-# ТУТ ВРЕМЕННО ВСПОМОГАТЕЛЬНЫЕ
     def starts_with_command(self, body):
-        """Checks if body starts with ! and has one or more letters after it"""
-        import re
-        return re.match(r"^!\w.*", body) is not None
+        """Проверяет, начинается ли тело сообщения с любого из активных префиксов"""
+        # self.prefixes у вас уже содержит ['.'] или другие символы из БД
+        for p in self.prefixes:
+            if body.startswith(p):
+                return True
+        return False
 
 
     def should_ignore_event(self, event):
@@ -180,6 +199,7 @@ class Bot(Methods):
 
                     # await self.start()
                     await self.setup_security()
+                    await self.load_prefixes() 
 
                     self.setup_callbacks()
 
