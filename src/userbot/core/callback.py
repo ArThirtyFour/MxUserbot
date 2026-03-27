@@ -69,18 +69,13 @@ class CallBack:
                 real_body = body.strip()
 
             if not self.bot.starts_with_command(real_body):
-                for mod in self.bot.all_modules.active_modules.values():
-                    if mod.enabled:
-                        try: await mod._matrix_message(self.bot, room, event)
-                        except Exception: logger.exception(f"Error in watcher")
-                return
+                for mod in self.bot.active_modules.values():
+                    if mod.enabled and getattr(mod, "_is_ready", False):
+                        try:
 
-            for mod in self.bot.all_modules.active_modules.values():
-                if mod.enabled:
-                    try:
-                        await mod._matrix_message(self.bot, room, event)
-                    except Exception:
-                        logger.exception(f"Error in watcher of {mod.name}")
+                            await mod._matrix_message(self.bot, room, event)
+                        except Exception: logger.exception(f"Error in watcher in {mod.name}")
+                return
 
             prefix = "!"
             if real_body.startswith(prefix):
@@ -88,10 +83,18 @@ class CallBack:
                 cmd_name = parts[0].lower()
                 args = parts[1] if len(parts) > 1 else ""
 
-                for mod in self.bot.all_modules.active_modules.values():
-                    if not mod.enabled: continue
+                for mod in self.bot.active_modules.values():
+                    if not mod.enabled: 
+                        continue
                     
                     if cmd_name in mod.commands:
+                        if not getattr(mod, "_is_ready", False):
+                            await self.bot.send_text(
+                                room, 
+                                f"⏳ Модуль <b>{mod.name}</b> ещё загружается... Пожалуйста, подождите."
+                            )
+                            return
+
                         func = mod.commands[cmd_name]
                         try:
                             await func(self.bot, room, event, args)
@@ -99,5 +102,4 @@ class CallBack:
                             logger.exception(f"Error in command {cmd_name}")
                             await self.bot.send_text(room, f"❌ Ошибка: {e}")
                         return
-                    
-            
+                
