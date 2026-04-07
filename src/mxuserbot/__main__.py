@@ -175,7 +175,7 @@ class MXUserBot(Program):
         ]
 
         new_room_id = await self.client.create_room(
-            name="Sekai Us1111erbot Logs",
+            name="[LOGS] | MX-USERBOT",
             topic="Техническая комната для системных уведомлений и логов",
             is_direct=True,
             visibility=RoomDirectoryVisibility.PRIVATE,
