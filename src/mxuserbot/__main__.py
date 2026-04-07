@@ -375,12 +375,3 @@ class MXUserBot(Program):
             self.log.exception(f"Критическая ошибка при запуске бота: {e}")
 
 
-if __name__ == "__main__":
-    try:
-        bot = MXUserBot()
-        bot.run()
-    except KeyboardInterrupt:
-        logger.info("Работа бота завершена пользователем (Ctrl+C).")
-    except Exception:
-        import traceback
-        traceback.print_exc(file=sys.stderr)
