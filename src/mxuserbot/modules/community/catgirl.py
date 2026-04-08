@@ -1,8 +1,8 @@
-from typing import Any
 import aiohttp
-from mautrix.types import MessageEvent
+# Добавляем импорт ImageInfo
+from mautrix.types import MessageEvent, ImageInfo 
 from ...core import loader
-
+from mautrix.client import Client
 
 @loader.tds
 class MatrixModule(loader.Module):
@@ -14,14 +14,14 @@ class MatrixModule(loader.Module):
     }
 
     @loader.command()
-    async def catgirl(self, mx, event: MessageEvent):
+    async def catgirl(self, mx: Client, event: MessageEvent):
         """Отправляет фото кошко-девочки через API."""
         async with aiohttp.ClientSession() as s:
             async with s.get("https://api.nekosia.cat/api/v1/images/catgirl") as r:
                 if r.status != 200:
-                    return await mx.client.send_text(
+                    return await mx.send_text(
                         room_id=event.room_id, 
-                        html=self.strings["error_api"]
+                        content=self.strings["error_api"]
                     )
                 
                 data = await r.json()
@@ -30,9 +30,9 @@ class MatrixModule(loader.Module):
 
                 async with s.get(url) as img:
                     if img.status != 200:
-                        return await mx.client.send_text(
+                        return await mx.send_text(
                             room_id=event.room_id, 
-                            html=self.strings["error_image"]
+                            content=self.strings["error_image"]
                         )
                     image_bytes = await img.read()
 
@@ -40,10 +40,16 @@ class MatrixModule(loader.Module):
                         data=image_bytes,
                         mime_type="image/png",
                         filename=filename
+                    )
 
+                    image_info = ImageInfo(
+                        mimetype="image/png",
+                        size=len(image_bytes)
                     )
 
             await mx.client.send_image(
                 room_id=event.room_id,
-                url=mxc
+                url=mxc,
+                info=image_info,
+                file_name=filename
             )

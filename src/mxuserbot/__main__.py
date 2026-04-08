@@ -17,9 +17,21 @@ from .core.security import SekaiSecurity
 from ..database import Database, AsyncSessionWrapper  
 
 
+
+
+
+# === ОФИЦИАЛЬНЫЕ SQLITE КЛАССЫ MAUTRIX ===
+from mautrix.util.async_db import Database as MautrixDatabase
+from mautrix.crypto.store.asyncpg import PgCryptoStore, PgCryptoStateStore
+
+from .core.callback import CallBack
+from .core.loader import Loader
+from .core.security import SekaiSecurity 
+from ..database import Database, AsyncSessionWrapper  
+
+
 class InterceptHandler(logging.Handler):
     """Перехватчик стандартных логов Python и перенаправление их в Loguru."""
-    
     def emit(self, record: logging.LogRecord) -> None:
         try:
             level = logger.level(record.levelname).name
@@ -31,10 +43,80 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
             
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, 
-            record.getMessage()
-        )
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+
+
+
+from ruamel.yaml.comments import CommentedMap
+from ..settings import config
+
+class Config(BaseFileConfig):
+    """Логика конфигурации через SQLite."""
+    def __init__(self, path: str, base_path: str, db: Any = None) -> None:
+        super().__init__(path, base_path)
+        self.db = db
+        self.owner = "core"
+        self._default_values = {
+            "matrix": {
+                "base_url": config.matrix_config.base_url,
+                "username": config.matrix_config.owner,
+                "password": config.matrix_config.password.get_secret_value(),
+                "device_id": "MXBT-SQL", # НОВЫЙ ID для чистой базы
+                "log_room_id": "",
+                "owner": config.matrix_config.owner
+            },
+            "logging": {"version": 1}
+        }
+        self._data = RecursiveDict(self._default_values, CommentedMap)
+
+    def load_base(self) -> RecursiveDict:
+        return RecursiveDict(self._default_values, CommentedMap)
+
+    def load(self) -> None: pass
+    def save(self) -> None: pass
+
+    def do_update(self, helper: ConfigUpdateHelper) -> None:
+        helper.copy("matrix")
+        helper.copy("logging")
+
+    async def load_from_db(self) -> None:
+        if not self.db: return
+        async def fetch_recursive(data_dict: dict, prefix=""):
+            for key, value in data_dict.items():
+                full_key = f"{prefix}{key}"
+                if isinstance(value, dict):
+                    await fetch_recursive(value, f"{full_key}.")
+                else:
+                    db_value = await self.db.get(self.owner, full_key)
+                    if db_value is not None:
+                        self[full_key] = db_value
+        await fetch_recursive(self._default_values)
+
+    async def update_db_key(self, key: str, value: Any) -> None:
+        self[key] = value
+        if self.db:
+            await self.db.set(self.owner, key, value)
+
+
+# class InterceptHandler(logging.Handler):
+#     """Перехватчик стандартных логов Python и перенаправление их в Loguru."""
+    
+#     def emit(self, record: logging.LogRecord) -> None:
+#         try:
+#             level = logger.level(record.levelname).name
+#         except ValueError:
+#             level = record.levelno
+            
+#         frame, depth = sys._getframe(6), 6
+#         while frame and frame.f_code.co_filename == logging.__file__:
+#             frame = frame.f_back
+#             depth += 1
+            
+#         logger.opt(depth=depth, exception=record.exc_info).log(
+#             level, 
+#             record.getMessage()
+        # )
 
 
 def setup_loguru(
@@ -61,72 +143,41 @@ from typing import Any
 
 from ..settings import config
 
-class Config(BaseFileConfig):
-    """
-    Логика конфигурации через SQLite.
-    Дефолтные значения подтягиваются из файла настроек settings.py
-    """
-    
-    def __init__(self, path: str, base_path: str, db: Any = None) -> None:
-        super().__init__(path, base_path)
-        self.db = db
-        self.owner = "core"
-        
-        self._default_values = {
-            "matrix": {
-                "base_url": config.matrix_config.base_url,
-                "username": config.matrix_config.owner,
-                "password": config.matrix_config.password.get_secret_value(),
-                "device_id": config.matrix_config.device_id,
-                "log_room_id": "",
-                "owner": config.matrix_config.owner
-            },
-            "logging": {"version": 1}
-        }
-        
-        self._data = RecursiveDict(self._default_values, CommentedMap)
 
-    def load_base(self) -> RecursiveDict:
-        """Метод для mautrix.util.program"""
-        return RecursiveDict(self._default_values, CommentedMap)
+import contextlib
+from typing import AsyncGenerator, Optional, Dict, List, Any
+from mautrix.crypto import OlmMachine
 
-    def load(self) -> None:
-        """Файлы не используем"""
-        pass
 
-    def save(self) -> None:
-        """Синхронный save ничего не делает, так как мы пишем в БД асинхронно"""
-        pass
+from mautrix.crypto.store import MemoryCryptoStore as BaseMemoryCryptoStore
+from mautrix.types import CrossSigningUsage, TOFUSigningKey
+from mautrix.client.state_store import MemoryStateStore as BaseMemoryStateStore
 
-    def do_update(self, helper: ConfigUpdateHelper) -> None:
-        helper.copy("matrix")
-        helper.copy("logging")
 
-    async def load_from_db(self) -> None:
-        """
-        Загрузка из SQLite. Если ключа в БД нет, 
-        останется значение из settings.py (из _default_values).
-        """
-        if not self.db:
-            return
+class MemoryCryptoStore(BaseMemoryCryptoStore):
+    """Исправленное хранилище ключей."""
+    @contextlib.asynccontextmanager
+    async def transaction(self) -> AsyncGenerator[None, None]:
+        yield
 
-        async def fetch_recursive(data_dict: dict, prefix=""):
-            for key, value in data_dict.items():
-                full_key = f"{prefix}{key}"
-                if isinstance(value, dict):
-                    await fetch_recursive(value, f"{full_key}.")
-                else:
-                    db_value = await self.db.get(self.owner, full_key)
-                    if db_value is not None:
-                        self[full_key] = db_value
+    async def put_cross_signing_key(self, user_id: str, usage: CrossSigningUsage, key: str) -> None:
+        """Фикс ошибки AttributeError: can't set attribute."""
+        try:
+            current = self._cross_signing_keys[user_id][usage]
+            self._cross_signing_keys[user_id][usage] = TOFUSigningKey(key=key, first=current.first)
+        except KeyError:
+            self._cross_signing_keys.setdefault(user_id, {})[usage] = TOFUSigningKey(key=key, first=key)
 
-        await fetch_recursive(self._default_values)
+class CustomMemoryStateStore(BaseMemoryStateStore):
+    async def find_shared_rooms(self, user_id: str) -> list[str]:
+        shared = []
+        for room_id, members in getattr(self, "members", {}).items():
+            if user_id in members: shared.append(room_id)
+        return shared
 
-    async def update_db_key(self, key: str, value: Any) -> None:
-        """Обновление значения в памяти и в SQLite"""
-        self[key] = value
-        if self.db:
-            await self.db.set(self.owner, key, value)
+
+from mautrix.api import Method
+from mautrix.types import TrustState
 
 
 class MXUserBot(Program):
@@ -247,18 +298,34 @@ class MXUserBot(Program):
         self.log = logger.bind(name=self.name)
 
 
-    def prepare(
-        self
-    ) -> None:
-        """Подготовка бота к запуску (переопределение базового метода)."""
+    # def prepare(self) -> None:
+    #     """Подготовка бота к запуску (переопределение базового метода)."""
+    #     super().prepare()
+    #     config_mat = self.config["matrix"]
+
+    #     # Используем наш пропатченный класс состояния комнат
+    #     self.state_store = CustomMemoryStateStore()
+
+    #     # Используем наш пропатченный класс криптографии
+    #     self.crypto_store = MemoryCryptoStore(
+    #         account_id=config_mat["username"], 
+    #         pickle_key="sekai_secret_pickle_key" 
+    #     )
+
+    #     self.client = Client(
+    #         api=HTTPAPI(base_url=config_mat["base_url"]),
+    #         state_store=self.state_store,
+    #         sync_store=self.crypto_store  # MemoryCryptoStore реализует SyncStore
+    #     )
+
+    #     self.add_startup_actions(self.setup_userbot())
+
+
+    def prepare(self) -> None:
+        """Подготовка бота к запуску."""
         super().prepare()
-        config_mat = self.config["matrix"]
-
-        self.client = Client(
-            api=HTTPAPI(base_url=config_mat["base_url"])
-        )
-
         self.add_startup_actions(self.setup_userbot())
+
 
 
     async def get_args(
@@ -340,18 +407,98 @@ class MXUserBot(Program):
 
             self.config.db = self.db
             await self.config.load_from_db()
-
             conf = self.config["matrix"]
+
+            # Инициализация SQLite базы для Ключей  || ПЕРЕПИСАТЬ
+            import os
+            from mautrix.crypto.store.asyncpg import PgCryptoStore
+            from mautrix.crypto.store.asyncpg import PgCryptoStateStore 
+
+            db_path = os.path.join(os.getcwd(), "crypto.db")
+            self.log.info(f"Подключение к базе ключей E2EE: {db_path}")
+            
+            self.crypto_db = MautrixDatabase.create(f"sqlite:///{db_path}")
+            await self.crypto_db.start() 
+
+            self.log.info("Инициализация таблиц базы данных...")
+            
+            await PgCryptoStore.upgrade_table.upgrade(self.crypto_db)
+            
+            await PgCryptoStateStore.upgrade_table.upgrade(self.crypto_db)
+            # ----------------------------------------------
+
+            self.state_store = PgCryptoStateStore(self.crypto_db)
+            self.crypto_store = PgCryptoStore(conf["username"], "sekai_secret_pickle_key", self.crypto_db)
+
+
+
+            # 3. Инициализация Клиента
+            self.client = Client(
+                api=HTTPAPI(base_url=conf["base_url"]),
+                state_store=self.state_store,
+                sync_store=self.crypto_store
+            )
+
+            # 4. Логин
             self.log.info("Выполняю вход в Matrix...")
             await self.client.login(
                 identifier=conf["username"],
                 password=conf["password"],
                 device_id=conf["device_id"]
             )
-            self.log.info("Успешный вход в систему!")
+            self.log.info(f"Вход выполнен как {conf['device_id']}!")
 
+            # 5. Настройка шифрования
+            self.client.crypto = OlmMachine(self.client, self.crypto_store, self.state_store)
+            self.client.crypto.allow_key_requests = True
+
+            # Защита от краша при старых/битых сообщениях To-Device
+            self.client.remove_event_handler(EventType.TO_DEVICE_ENCRYPTED, self.client.crypto.handle_to_device_event)
+            async def safe_handle_to_device(evt):
+                try:
+                    await self.client.crypto.handle_to_device_event(evt)
+                except Exception as e:
+                    self.log.warning(f"Пропущено To-Device сообщение (битый ключ): {e}")
+            self.client.add_event_handler(EventType.TO_DEVICE_ENCRYPTED, safe_handle_to_device)
+            
+            await self.client.crypto.load()
+            if not await self.crypto_store.get_device_id():
+                self.log.info("Публикация ключей устройства в Matrix...")
+                await self.client.crypto.share_keys()
+
+            # Доверие своим устройствам
+            async def trust_own_devices():
+                self.log.info("Синхронизация списка собственных устройств...")
+                try:
+                    resp = await self.client.api.request(Method.GET, "/_matrix/client/v3/devices")
+                    my_devices = resp.get("devices",[])
+                except Exception as e:
+                    self.log.error(f"Не удалось получить список устройств: {e}")
+                    return
+
+                cached_devices = await self.crypto_store.get_devices(self.client.mxid) or {}
+                updated_count = 0
+                for dev in my_devices:
+                    d_id = dev.get("device_id")
+                    if not d_id or d_id == self.client.device_id: continue
+                    
+                    identity = await self.client.crypto.get_or_fetch_device(self.client.mxid, d_id)
+                    if identity and identity.trust != TrustState.VERIFIED:
+                        identity.trust = TrustState.VERIFIED
+                        cached_devices[d_id] = identity
+                        updated_count += 1
+                        self.log.debug(f"Устройство {d_id} ({dev.get('display_name', 'Unknown')}) доверено.")
+
+                if updated_count > 0:
+                    await self.crypto_store.put_devices(self.client.mxid, cached_devices)
+                    self.log.info(f"Успешно верифицировано новых устройств: {updated_count}")
+                else:
+                    self.log.info("Все устройства уже верифицированы.")
+
+            await trust_own_devices()
+
+            # 6. Инициализация модулей бота
             log_room = await self._setup_log_room()
-
             self.all_modules = Loader(self.db)
             await self.all_modules.register_all(self)
             self.active_modules = self.all_modules.active_modules
@@ -361,17 +508,28 @@ class MXUserBot(Program):
             await self._register_handlers()
 
             import datetime
-            await self.log_to_room(f"🚀 **Sekai UserBot** запущен!\n"
-                                   f"Версия: `{self.version}`\n"
-                                   f"Время: `{datetime.datetime.now().strftime('%H:%M:%S')}`")
+            await self.log_to_room(f"🚀 **Sekai UserBot (SQLite Crypto)** запущен!\n"
+                                f"Версия: `{self.version}`\n"
+                                f"Время: `{datetime.datetime.now().strftime('%H:%M:%S')}`")
             
             await self._cleanup_empty_rooms()
             self.start_time = int(time.time() * 1000)
 
             self.log.info("Запуск синхронизации Matrix...")
-            await self.client.start(filter_data=conf["owner"])
+            
+            # ФИЛЬТР: Берем только новые сообщения, чтобы не было "красного спама" от истории
+            sync_filter = {"room": {"timeline": {"limit": 1}}}
+            await self.client.start(filter_data=sync_filter)
             
         except Exception as e:
             self.log.exception(f"Критическая ошибка при запуске бота: {e}")
 
-
+import traceback
+if __name__ == "__main__":
+    try:
+        bot = MXUserBot()
+        bot.run()
+    except KeyboardInterrupt:
+        logger.info("Работа бота завершена пользователем (Ctrl+C).")
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
