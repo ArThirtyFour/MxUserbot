@@ -2,6 +2,10 @@
 # import re
 
 
+from mautrix.util.formatter import parse_html
+
+
+from mautrix.types import EventID, Format, MessageType, RelatesTo, RoomID, TextMessageEventContent
 
 
 def get_commands(cls):
@@ -16,8 +20,72 @@ def get_commands(cls):
 #     return event.sender in owners
 
 
-
 # from loguru import logger
+# навайбкожено, переписать
+from mautrix.types import (
+    RoomID, EventID, MessageType, RelatesTo, 
+    TextMessageEventContent, Format, RelationType
+)
+from mautrix.util.formatter import parse_html
+
+async def answer(
+    mx,
+    room_id: RoomID,
+    text: str,
+    html: bool = True,
+    msgtype: MessageType = MessageType.TEXT,
+    relates_to: RelatesTo | None = None,
+    edit_id: EventID | None = None,
+    **kwargs,
+) -> EventID:
+    # 1. Готовим текст без тегов для уведомлений
+    plain_text = await parse_html(text) if html else text
+
+    if edit_id:
+        # --- ЛОГИКА РЕДАКТИРОВАНИЯ ---
+        content = TextMessageEventContent(
+            msgtype=msgtype,
+            body=f" * {plain_text}" # Звездочка для старых клиентов
+        )
+        if html:
+            content.format = Format.HTML
+            content.formatted_body = text
+
+        # Указываем, ЧТО мы редактируем
+        content.relates_to = RelatesTo(
+            rel_type=RelationType.REPLACE,
+            event_id=edit_id
+        )
+
+        # Создаем объект нового контента (обязательно для Matrix)
+        new_content = TextMessageEventContent(
+            msgtype=msgtype,
+            body=plain_text
+        )
+        if html:
+            new_content.format = Format.HTML
+            new_content.formatted_body = text
+
+        # ПРАВИЛЬНОЕ ПРИСВОЕНИЕ (через атрибут, а не в __init__)
+        content.new_content = new_content
+    else:
+        # --- ОБЫЧНАЯ ОТПРАВКА ---
+        content = TextMessageEventContent(
+            msgtype=msgtype,
+            body=plain_text
+        )
+        if html:
+            content.format = Format.HTML
+            content.formatted_body = text
+
+        if relates_to:
+            content.relates_to = relates_to
+        
+    # Отправляем. Если mx — это интерфейс, он вызовет send_message у клиента.
+    # Если mx — это клиент, он вызовет свой метод.
+    if hasattr(mx, "send_message"):
+        return await mx.send_message(room_id, content, **kwargs)
+    return await mx.client.send_message(room_id, content, **kwargs)
 
 
 
