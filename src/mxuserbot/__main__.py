@@ -175,13 +175,17 @@ class MXUserBot(Program):
             return
 
         try:
-            # Передаем self.interface в качестве аргумента mx
             await utils.send_image(
                 mx=self.interface, 
                 room_id=target_room,
                 url="mxc://pashahatsune.pp.ua/auQYlcMeh34P8e5i5Z0BQGYzADL278MZ",
                 caption=message,
                 file_name="photo.png",
+                info=ImageInfo(
+                    width=600,
+                    height=335,
+                    mimetype="image/png"
+                )
             )
         except Exception as e:
             self.log.error(f"Ошибка отправки лога в комнату: {e}")
