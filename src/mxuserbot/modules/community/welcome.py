@@ -1,8 +1,7 @@
 import asyncio
 from typing import Any
 from mautrix.types import MessageEvent, EventType, Membership, StateEvent
-from loguru import logger
-from ...core import loader
+from ...core import loader, utils
 
 @loader.tds
 class MatrixModule(loader.Module):
@@ -36,9 +35,7 @@ class MatrixModule(loader.Module):
         """Обработчик событий членства"""
         room_id = str(event.room_id)
         target_user = event.state_key
-        # ВАЖНО: Доступ к membership через .content
         membership = event.content.membership 
-
 
         if target_user == mx.client.mxid:
             return
@@ -59,18 +56,16 @@ class MatrixModule(loader.Module):
             pass
 
         if membership == Membership.JOIN:
-            logger.info(f"[Welcome] Отправляю приветствие для {target_user}")
             raw_text = room_config.get("welcome_text", self.strings["welcome_msg"])
             await asyncio.sleep(1)
             formatted = self._format_text(raw_text, event, room_name)
-            await mx.client.send_text(room_id, html=formatted)
+            await utils.answer(mx, room_id, formatted)
 
         elif membership == Membership.LEAVE:
-            logger.info(f"[Welcome] Отправляю прощание для {target_user}")
             raw_text = room_config.get("leave_text", self.strings["leave_msg"])
             await asyncio.sleep(0.5)
             formatted = self._format_text(raw_text, event, room_name)
-            await mx.client.send_text(room_id, html=formatted)
+            await utils.answer(mx, room_id, formatted)
 
     @loader.command()
     async def welcomecfg(self, mx: Any, event: MessageEvent):
@@ -86,14 +81,14 @@ class MatrixModule(loader.Module):
             msg = self.strings["status_on"]
 
         await self._set("room_settings", settings)
-        await mx.client.send_text(room_id, html=msg)
+        await utils.answer(mx, room_id, msg)
 
     @loader.command()
     async def setwelcome(self, mx: Any, event: MessageEvent):
         """Установить текст приветствия"""
         args = event.content.body.split(maxsplit=1)
         if len(args) < 2:
-            return await mx.client.send_text(event.room_id, "Введите текст!")
+            return await utils.answer(mx, event.room_id, "Введите текст!")
 
         settings = await self._get_settings()
         room_id = str(event.room_id)
@@ -101,4 +96,4 @@ class MatrixModule(loader.Module):
         
         settings[room_id]["welcome_text"] = args[1]
         await self._set("room_settings", settings)
-        await mx.client.send_text(room_id, html=self.strings["text_saved"])
+        await utils.answer(mx, room_id, self.strings["text_saved"])
