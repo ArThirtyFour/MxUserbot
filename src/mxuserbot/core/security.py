@@ -5,7 +5,7 @@ from loguru import logger
 class SekaiSecurity:
     def __init__(self, bot):
         self.bot = bot
-        self.db = bot.db
+        self._db = bot._db
         self.owners = set()
 
     async def init_security(self):
@@ -23,7 +23,7 @@ class SekaiSecurity:
 
         self.owners.add(my_id)
 
-        raw_data = await self.db.get("core", "owners")
+        raw_data = await self._db.get("core", "owners")
         
         db_owners = []
         if hasattr(raw_data, 'value'):
@@ -36,7 +36,7 @@ class SekaiSecurity:
                 if owner and isinstance(owner, str):
                     self.owners.add(owner)
 
-        await self.db.set("core", "owners", list(self.owners))
+        await self._db.set("core", "owners", list(self.owners))
         logger.success(f"Security active. Owners: {self.owners}")
 
 
