@@ -118,8 +118,8 @@ class Module(ABC):
 
 
 
+# В вашем коде класс Config, измените метод __init__:
 class Config(BaseFileConfig):
-    """Логика конфигурации через SQLite."""
     def __init__(self, path: str, base_path: str, db: Any = None) -> None:
         super().__init__(path, base_path)
         self.db = db
@@ -129,12 +129,14 @@ class Config(BaseFileConfig):
                 "base_url": config.matrix_config.base_url,
                 "username": config.matrix_config.owner,
                 "password": config.matrix_config.password.get_secret_value(),
-                "device_id": "MxUserBot",
+                "device_id": "",
+                "access_token": "",
                 "log_room_id": "",
                 "owner": config.matrix_config.owner
             },
             "logging": {"version": 1}
         }
+
         self._data = RecursiveDict(self._default_values, CommentedMap)
 
     def load_base(self) -> RecursiveDict:
