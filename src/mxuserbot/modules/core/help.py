@@ -88,7 +88,7 @@ class HelperModule(loader.Module):
         await utils.send_image(
             mx=mx, 
             room_id=event.room_id,
-            url="mxc://pashahatsune.pp.ua/auQYlcMeh34P8e5i5Z0BQGYzADL278MZ",
+            url="mxc://pashahatsune.pp.ua/ZPKENBwSwKgbFvrYWByGr1140eNqWQyL",
             caption=self.strings.get("info_caption"),
             file_name="info.png",
             info=ImageInfo(

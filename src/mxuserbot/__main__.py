@@ -178,7 +178,7 @@ class MXUserBot(Program):
             await utils.send_image(
                 mx=self.interface, 
                 room_id=target_room,
-                url="mxc://pashahatsune.pp.ua/auQYlcMeh34P8e5i5Z0BQGYzADL278MZ",
+                url="mxc://pashahatsune.pp.ua/ZPKENBwSwKgbFvrYWByGr1140eNqWQyL",
                 caption=message,
                 file_name="photo.png",
                 info=ImageInfo(
