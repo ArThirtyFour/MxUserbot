@@ -1,11 +1,16 @@
 from mautrix.types import ImageInfo, MessageEvent
 from ...core import loader, utils
 
+class Meta:
+    name = "HelperModule"
+    _cls_doc = "Отображает список всех доступных команд и информацию о системе."
+    version = "1.0.0"
+    dependencies = ["patchlib"]
+    tags = ["helper"]
+
 @loader.tds
-class MatrixModule(loader.Module):
+class HelperModule(loader.Module):
     strings = {
-        "name": "HelperModule",
-        "_cls_doc": "Отображает список всех доступных команд и информацию о системе.",
         "header": "<b>💠 {name}</b><br><i>{desc}</i><br><br>",
         "modules_title": "<b>Доступные модули и команды:</b><br>",
         "module_item": "▫️ <b>{name}</b> — <i>{desc}</i><br>    ⬥ {commands}<br><br>",
@@ -34,9 +39,10 @@ class MatrixModule(loader.Module):
         prefix = await mx.get_prefix()
 
         if not args:
+            # Берем данные из Meta текущего модуля
             msg = self.strings.get("header").format(
-                name=self.friendly_name,
-                desc=self._help()
+                name=self.Meta.name,
+                desc=self.Meta._cls_doc
             )
             msg += self.strings.get("modules_title")
 
@@ -46,9 +52,10 @@ class MatrixModule(loader.Module):
                 else:
                     cmds = self.strings.get("no_cmds")
 
+                # Берем данные из Meta перебираемых модулей
                 msg += self.strings.get("module_item").format(
-                    name=mod.friendly_name,
-                    desc=mod._help() if hasattr(mod, "_help") else self.strings.get("no_desc"),
+                    name=mod.Meta.name,
+                    desc=mod.Meta._cls_doc,
                     commands=cmds
                 )
 
@@ -90,4 +97,3 @@ class MatrixModule(loader.Module):
                 mimetype="image/png"
             )
         )
-        
