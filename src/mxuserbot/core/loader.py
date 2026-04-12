@@ -1,4 +1,5 @@
 import os
+import sys
 import typing
 import shutil
 import inspect
@@ -11,12 +12,11 @@ from loguru import logger
 
 from . import utils
 from .types import Module 
-_MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
 
+_MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
 
 def _calc_module_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest()
-
 
 def command(name=None):
     def decorator(func):
@@ -27,7 +27,7 @@ def command(name=None):
 
 
 def tds(cls):
-    """Decorator that makes triple-quote docstrings translatable"""
+    """Decorator that makes triple-quote docstrings translatable for commands"""
     if not hasattr(cls, 'strings'):
         cls.strings = {}
 
@@ -54,8 +54,73 @@ def tds(cls):
             except AttributeError:
                 func_.__func__.__doc__ = self.strings[f"_cmd_doc_{command_}"]
 
-        # self.__doc__ = self.strings.get("_cls_doc", self.__doc__)
-        self.__class__.__doc__ = self.strings.get("_cls_doc", self.__class__.__doc__)
+        return await self._internal_init._old_(self, *args, **kwargs)
+
+    _internal_init._old_ = cls._internal_init
+    cls._internal_init = _internal_init
+
+    for command_, func in utils.get_commands(cls).items():
+        cmd_doc = func.__doc__
+        if cmd_doc:
+            cls.strings.setdefault(f"_cmd_doc_{command_}", inspect.cleandoc(cmd_doc))
+
+
+    return cls
+import os
+import sys
+import typing
+import shutil
+import inspect
+import hashlib
+import asyncio
+import importlib.util
+from functools import wraps
+from pathlib import Path
+from loguru import logger
+
+from . import utils
+from .types import Module 
+
+_MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
+
+def _calc_module_hash(source: str) -> str:
+    return hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest()
+
+def command(name=None):
+    def decorator(func):
+        func.is_command = True
+        func.command_name = (name or func.__name__).lower()
+        return func
+    return decorator
+
+
+def tds(cls):
+    """Decorator that makes triple-quote docstrings translatable for commands"""
+    if not hasattr(cls, 'strings'):
+        cls.strings = {}
+
+    @wraps(cls._internal_init)
+    async def _internal_init(self, *args, **kwargs):
+        def proccess_decorators(mark: str, obj: str):
+            nonlocal self
+            for attr in dir(func_):
+                if (
+                    attr.endswith("_doc")
+                    and len(attr) == 6
+                    and isinstance(getattr(func_, attr), str)
+                ):
+                    var = f"strings_{attr.split('_')[0]}"
+                    if not hasattr(self, var):
+                        setattr(self, var, {})
+
+                    getattr(self, var).setdefault(f"{mark}{obj}", getattr(func_, attr))
+
+        for command_, func_ in utils.get_commands(cls).items():
+            proccess_decorators("_cmd_doc_", command_)
+            try:
+                func_.__doc__ = self.strings[f"_cmd_doc_{command_}"]
+            except AttributeError:
+                func_.__func__.__doc__ = self.strings[f"_cmd_doc_{command_}"]
 
         return await self._internal_init._old_(self, *args, **kwargs)
 
@@ -67,22 +132,8 @@ def tds(cls):
         if cmd_doc:
             cls.strings.setdefault(f"_cmd_doc_{command_}", inspect.cleandoc(cmd_doc))
 
-    cls_doc = cls.__dict__.get('__doc__') # Обходим наследование от ABC
-    if cls_doc:
-        cls.strings.setdefault("_cls_doc", inspect.cleandoc(cls_doc))
-
-    def _require(key: str, error_msg: str):
-        """Проверяет наличие и непустоту ключа в словаре strings"""
-        if not str(cls.strings.get(key, "")).strip():
-            raise ValueError(f"❌ {error_msg}")
-
-    _require("name", f"Модуль '{cls.__name__}' ОБЯЗАН иметь ключ 'name' в strings!")
-    _require("_cls_doc", f"Модуль '{cls.__name__}' ОБЯЗАН иметь docstring или ключ '_cls_doc' в strings!")
-
-    for cmd_name in utils.get_commands(cls).keys():
-        _require(f"_cmd_doc_{cmd_name}", f"Команда '!{cmd_name}' ОБЯЗАНА иметь docstring!")
-
     return cls
+
 
 class ScopedDatabase:
     """Обертка над БД, которая жестко привязывает запросы к имени модуля."""
@@ -91,13 +142,12 @@ class ScopedDatabase:
         self._module_name = module_name
 
     async def get(self, key: str, default=None):
-        # owner всегда жестко задан, модуль не может передать "core"
         return await self._raw_db.get(self._module_name, key, default)
 
     async def set(self, key: str, value):
         return await self._raw_db.set(self._module_name, key, value)
 
-import sys
+
 class Loader:
     def __init__(self, db_wrapper):
         self._db = db_wrapper
@@ -108,77 +158,109 @@ class Loader:
 
         self._background_tasks: typing.Set[asyncio.Task] = set()
 
-
     async def register_all(self, bot) -> None:
-        """Сканирует core и community папки с приоритетом core"""
+        """Сканирует core и community папки. Core модули загружаются первыми для защиты имен."""
         for p in [self.core_path, self.community_path]:
             p.mkdir(parents=True, exist_ok=True)
 
         community_files = [f for f in self.community_path.iterdir() if f.suffix == ".py" and not f.name.startswith("_")]
         core_files = [f for f in self.core_path.iterdir() if f.suffix == ".py" and not f.name.startswith("_")]
 
-        for path in community_files:
-            await self.register_module(path, bot, is_core=False)
-
+        # ВАЖНО: Сначала загружаем Core. Они займут имена в active_modules.
         for path in core_files:
             await self.register_module(path, bot, is_core=True)
 
-        logger.info(f"Загружено модулей: {len(self.active_modules)} (Core приоритет применен).")
+        # Теперь Community. Если будет конфликт, модуль просто не загрузится.
+        for path in community_files:
+            await self.register_module(path, bot, is_core=False)
+
+        logger.info(f"Загружено модулей: {len(self.active_modules)}.")
 
 
     async def register_module(self, path: Path, bot, is_core: bool = False):
-            """Импорт модуля с учетом вложенности (core/community)"""
-            subfolder = "core" if is_core else "community"
-            module_name = f"src.mxuserbot.modules.{subfolder}.{path.stem}"
+        """Импорт модуля с учетом вложенности (core/community) и проверкой Meta"""
+        subfolder = "core" if is_core else "community"
+        module_name = f"src.mxuserbot.modules.{subfolder}.{path.stem}"
+        
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, str(path))
+            if not spec or not spec.loader:
+                return
+
+            module = importlib.util.module_from_spec(spec)
+            module.__package__ = f"src.mxuserbot.modules.{subfolder}"
             
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, str(path))
-                if not spec or not spec.loader:
+            spec.loader.exec_module(module)
+
+            if not hasattr(module, 'Meta'):
+                logger.info(f"[{path.stem}] Отсутствует класс Meta. Модуль не будет загружен.")
+                return
+
+            module_meta = module.Meta
+
+            required_meta_vars = ["name", "_cls_doc"]
+            for req in required_meta_vars:
+                val = getattr(module_meta, req, None)
+                if not val or not str(val).strip():
+                    logger.error(f"[{path.stem}] В классе Meta отсутствует или пуста переменная '{req}'. Модуль не стартанет.")
                     return
 
-                module = importlib.util.module_from_spec(spec)
-                module.__package__ = f"src.mxuserbot.modules.{subfolder}"
-                
-                spec.loader.exec_module(module)
+            cls = None
+            for attr_name in dir(module):
+                if "Module" in attr_name:
+                    potential_cls = getattr(module, attr_name)
+                    if inspect.isclass(potential_cls) and potential_cls.__module__ == module.__name__:
+                        cls = potential_cls
+                        break
 
-                if not hasattr(module, 'MatrixModule'):
+            if not cls:
+                logger.warning(f"[{path.stem}] Класс с именем '*Module' не найден. Файл пропущен.")
+                return
+
+            short_name = path.stem
+
+            if not is_core:
+                if short_name in self.active_modules:
+                    logger.warning(f"[COMM] Отмена: файл '{short_name}.py' дублирует Core-модуль.")
                     return
-
-                cls = getattr(module, 'MatrixModule')
-                short_name = path.stem
                 
-                instance = cls()
-                instance._is_ready = False
-                instance._is_core = is_core
+                for loaded_mod in self.active_modules.values():
+                    if loaded_mod.__class__.__name__ == cls.__name__:
+                        logger.warning(f"[COMM] Отмена: Класс '{cls.__name__}' уже используется Core-модулем")
+                        return
+                    if loaded_mod.Meta.name == module_meta.name:
+                        logger.warning(f"[COMM] Отмена: Имя Meta.name '{module_meta.name}' уже используется Core-модулем.")
+                        return
 
-                if hasattr(instance, '_internal_init'):
-                    # ---------------------------------------------------------
+            cls.Meta = module_meta
+            
+            instance = cls()
+            instance._is_ready = False
+            instance._is_core = is_core
 
-
-                    if is_core:
-                        db_to_pass = self._db 
-                        loader_to_pass = self
-                    else:
-                        db_to_pass = ScopedDatabase(self._db, short_name)
-                        loader_to_pass = self.active_modules
-                    
-
-                    await instance._internal_init(short_name, db_to_pass, loader_to_pass, is_core=is_core)
-                    # ---------------------------------------------------------
-
-                self._apply_metadata(instance, spec)
+            if hasattr(instance, '_internal_init'):
+                if is_core:
+                    db_to_pass = self._db 
+                    loader_to_pass = self
+                else:
+                    db_to_pass = ScopedDatabase(self._db, short_name)
+                    loader_to_pass = self.active_modules
                 
-                self.active_modules[short_name] = instance
+                await instance._internal_init(short_name, db_to_pass, loader_to_pass, is_core=is_core)
 
-                startup_task = asyncio.create_task(self._finalize_module_startup(instance, bot, short_name))
-                self._background_tasks.add(startup_task)
-                startup_task.add_done_callback(self._background_tasks.discard)
+            self._apply_metadata(instance, spec)
+            
+            self.active_modules[short_name] = instance
 
-                type_str = "CORE" if is_core else "COMM"
-                logger.debug(f"[{type_str}] Импортирован модуль: {short_name}")
+            startup_task = asyncio.create_task(self._finalize_module_startup(instance, bot, short_name))
+            self._background_tasks.add(startup_task)
+            startup_task.add_done_callback(self._background_tasks.discard)
 
-            except Exception:
-                logger.exception(f"Ошибка при импорте модуля {path.name}")
+            type_str = "CORE" if is_core else "COMM"
+            logger.debug(f"[{type_str}] Импортирован модуль: {short_name} (Класс: {cls.__name__})")
+
+        except Exception:
+            logger.exception(f"Ошибка при импорте модуля {path.name}")
 
     async def unload_module(self, name: str, bot) -> bool:
         if name not in self.active_modules:
@@ -209,12 +291,9 @@ class Loader:
         logger.success(f"Модуль {name} успешно выгружен.")
         return True
 
-
-
     async def _finalize_module_startup(self, instance, bot, name):
         """Фоновый метод: загрузка настроек и запуск _matrix_start"""
         try:
-            # Загрузка конфига из БД
             if hasattr(instance, "set_settings"):
                 saved_settings = await self._db.get(name, "__config__")
                 if saved_settings:
@@ -228,7 +307,6 @@ class Loader:
             logger.success(f"Модуль {name} успешно запущен в фоне.")
         except Exception:
             logger.exception(f"Ошибка при запуске модуля {name}")
-
 
     def _apply_metadata(self, instance, spec):
         """Запись метаданных (исходник, хэш)"""
