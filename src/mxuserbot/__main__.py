@@ -342,7 +342,6 @@ class MXUserBot(Program):
         """Безопасный геттер для получения основного префикса."""
 
         db_result = await self._db.get("core", "prefix")
-            
         return db_result[0]
 
     async def setup_userbot(
