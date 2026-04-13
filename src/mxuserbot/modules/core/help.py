@@ -20,8 +20,7 @@ class HelperModule(loader.Module):
         "no_cmds": "Нет команд",
         "info_caption" : (
             "<b><u>MxUserBot Info</u></b><br>"
-            "🆔 | Версия: <code>0.2</code><br>"
-            "🌐 | Статус: <code>Alpha</code><br>"
+            "🆔 | Версия: <code>{version}</code><br>"
             "👩‍💻 | Исходники: "
             "<a href='https://github.com/PashaHatsune/MxUserbot'>GitHub</a><br>"
         )
@@ -87,7 +86,9 @@ class HelperModule(loader.Module):
             mx=mx, 
             room_id=event.room_id,
             url="mxc://pashahatsune.pp.ua/ZPKENBwSwKgbFvrYWByGr1140eNqWQyL",
-            caption=self.strings.get("info_caption"),
+            caption=self.strings.get("info_caption").format(
+                version=mx.version
+            ),
             file_name="info.png",
             info=ImageInfo(
                 width=600,
