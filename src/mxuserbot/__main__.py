@@ -49,28 +49,6 @@ class MXBotInterface:
         return self._bot.client
     
 
-    async def answer(self, text: str, **kwargs):
-        """
-        Автоматически редактирует команду. 
-        Если нужно отправить новое сообщение вместо правки — передайте edit_id=None
-        """
-        from .core import utils
-        
-        try:
-            event = self._current_event.get()
-            room_id = event.room_id
-            if "edit_id" not in kwargs:
-                kwargs["edit_id"] = event.event_id
-        except LookupError:
-            room_id = kwargs.get("room_id")
-            if not room_id:
-                logger.error("answer() вызван без контекста и без room_id!")
-                return
-
-        return await utils.answer(self, event.room_id, text, **kwargs)
-    
-
-
     @property
     def active_modules(self) -> dict:
         return self._bot.active_modules

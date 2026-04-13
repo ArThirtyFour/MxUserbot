@@ -56,7 +56,7 @@ class HelperModule(loader.Module):
                     commands=cmds
                 )
 
-            return await mx.answer(msg)
+            return await utils.answer(mx, msg)
 
         cmd_name = args.lower()
         for mod in mx.active_modules.values():
@@ -69,9 +69,9 @@ class HelperModule(loader.Module):
                     name=cmd_name,
                     desc=doc
                 )
-                return await mx.answer(res)
+                return await utils.answer(mx, res)
 
-        await mx.answer(
+        await utils.answer(mx, 
             self.strings.get("cmd_not_found").format(
                 prefix=prefix,
                 name=cmd_name

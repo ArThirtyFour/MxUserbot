@@ -1,6 +1,6 @@
 from typing import Any
 from mautrix.types import MessageEvent
-from ...core import loader
+from ...core import loader, utils
 
 class Meta:
     name = "PrefixModule"
@@ -28,16 +28,16 @@ class PrefixModule(loader.Module):
         parts = body.split()
         
         if len(parts) < 2:
-            return await mx.answer(self.strings.get("error_no_args"))
+            return await utils.answer(mx, self.strings.get("error_no_args"))
 
         new_prefix = parts[1]
 
         if len(new_prefix) != 1:
-            return await mx.answer(self.strings.get("error_too_long"))
+            return await utils.answer(mx, self.strings.get("error_too_long"))
 
         allowed = self.strings.get("allowed_symbols")
         if new_prefix not in allowed:
-            return await mx.answer(
+            return await utils.answer(mx, 
                 self.strings.get("error_set_prefix").format(
                     new_prefix=new_prefix,
                     allowed_symbols=allowed
@@ -50,6 +50,6 @@ class PrefixModule(loader.Module):
         if hasattr(mx, "prefixes"):
             mx.prefixes = [query]
 
-        await mx.answer(
+        await utils.answer(mx, 
             self.strings.get("success_set_prefix").format(new_prefix=new_prefix)
         )
