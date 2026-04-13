@@ -153,13 +153,14 @@ async def request(
         try:
             async with session.request(method, url, params=params, headers=headers, **kwargs) as response:
                 if return_type == "json":
-                    return await response.json()
+                    return await response.json(content_type=None)
                 elif return_type == "text":
                     return await response.text()
                 elif return_type == "bytes":
                     return await response.read()
                 return response
         except Exception as e:
+            print
             return None
 
 async def send_image(
