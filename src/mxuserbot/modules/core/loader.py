@@ -1,183 +1,172 @@
-import aiohttp
 from pathlib import Path
 from typing import Any
 
 from mautrix.types import MessageEvent
 from ...core import loader, utils
 
-
 REPO_RAW_URL = "https://raw.githubusercontent.com/MxUserBot/mx-modules/main"
 
 
 class Meta:
     name = "LoaderModule"
-    _cls_doc = "Скачивает, управляет и перезагружает модули из удаленного репозитория."
-    version = "1.0.2"
+    _cls_doc = "Downloads, manages, and reloads modules from a remote repository."
+    version = "1.1.0"
     tags = ["system"]
-    dependencies = ["pathlib"]
 
 
 @loader.tds
 class LoaderModule(loader.Module):
+    """Module manager for Sekai Matrix UserBot"""
+
     strings = {
-        "no_url_or_id": "❌ Укажите URL или ID модуля из репозитория",
-        "downloading": "⏳ Скачиваю модуль...",
-        "fetching_repo": "⏳ Ищу модуль <code>{id}</code> в репозитории...",
-        "repo_not_found": "❌ Модуль <code>{id}</code> не найден в репозитории.",
-        "done": "✅ Модуль загружен: <code>{name}</code>",
-        "error": "❌ Ошибка: <code>{err}</code>",
+        "no_url_or_id": "❌ Provide a URL or Module ID from the repository",
+        "downloading": "⏳ Downloading module...",
+        "fetching_repo": "⏳ Searching for module <code>{id}</code> in the repository...",
+        "repo_not_found": "❌ Module <code>{id}</code> not found in the repository.",
+        "done": "✅ Module loaded: <code>{name}</code>",
+        "error": "❌ Error: <code>{err}</code>",
         
-        "reloaded_header": "<b>♻️ Модули перезагружены:</b><br>",
+        "reloaded_header": "<b>♻️ Modules reloaded:</b><br>",
         "module_item": "▫️ <code>{name}</code><br>",
         
-        "no_name": "❌ Укажите системное имя модуля для выгрузки (без .py)",
-        "not_found": "❌ Модуль <code>{name}</code> не найден среди активных",
-        "unloaded": "✅ Модуль <code>{name}</code> успешно выгружен и удалён",
+        "no_name": "❌ Provide a module filename to unload (without .py)",
+        "not_found": "❌ Module <code>{name}</code> not found among active modules",
+        "unloaded": "✅ Module <code>{name}</code> successfully unloaded and deleted",
 
-        "search_no_query": "❌ Укажите текст для поиска. Например: <code>msearch music</code>",
-        "search_header": "<b>🔍 Результаты поиска «{query}»:</b><br><br>",
-        "search_item": "📦 <b>{name}</b> (<code>{id}</code>) v{version}<br>📝 <i>{desc}</i><br>📥 Установка: <code>mdl {id}</code><br><br>",
-        "search_empty": "❌ По запросу <code>{query}</code> ничего не найдено.",
+        "search_no_query": "❌ Provide search query. Example: <code>.msearch music</code>",
+        "search_header": "<b>🔍 Search results for «{query}»:</b><br><br>",
+        "search_item": "📦 | <b>{name}</b> (<code>{id}</code>) v{version}<br>📝 <i>{desc}</i><br>📥 Install: <code>.mdl {id}</code><br><br>",
+        "search_empty": "❌ | No results found for <code>{query}</code>.",
 
-        "repo_fetching_list": "⏳ Получаю список модулей...",
-        "repo_list_empty": "❌ Репозиторий пуст или недоступен.",
-        "repo_list_header": "<b>📦 Официальный репозиторий:</b><br><details><summary>Развернуть список ({count} шт.)</summary><br>",
+        "repo_fetching_list": "⏳ | <b>Fetching module list...</b>",
+        "repo_list_empty": "❌ | <b>Repository is empty or unavailable.</b>",
+        "repo_list_header": "<b>📦 | Official Repository:</b><br><details><summary>Expand list ({count} items)</summary><br>",
         "repo_list_item": "▫️ <b>{id}</b> — <small><i>{desc}</i></small><br>"
     }
 
     @loader.command()
     async def mdl(self, mx: Any, event: MessageEvent):
-        """<url/id> — скачивает модуль по ссылке или из репозитория"""
-        parts = event.content.body.split(maxsplit=1)
-        args = parts[1] if len(parts) > 1 else None
+        """<url/id> — Download a module via link or ID"""
+        arg = utils.get_args_raw(event)
         
-        if not args:
-            return await utils.answer(mx, event.room_id, self.strings.get("no_url_or_id"), edit_id=event.event_id)
+        if not arg:
+            return await utils.answer(mx, self.strings["no_url_or_id"])
         
-        arg = args.strip()
-        is_url = arg.startswith("http://") or arg.startswith("https://")
-
-        download_url = ""
-        filename = ""
+        arg = arg.strip()
+        is_url = arg.startswith(("http://", "https://"))
 
         try:
-            async with aiohttp.ClientSession() as session:
-                if not is_url:
-                    await utils.answer(mx, event.room_id, self.strings.get("fetching_repo").format(id=arg), edit_id=event.event_id)
-                    
-                    async with session.get(f"{REPO_RAW_URL}/index.json") as resp:
-                        if resp.status != 200:
-                            raise Exception(f"Не удалось получить index.json (HTTP {resp.status})")
-                        repo_data = await resp.json(content_type=None) 
-                    
-                    mod_info = next((m for m in repo_data.get("modules", []) if m.get("id") == arg), None)
-                    
-                    if not mod_info:
-                        return await utils.answer(mx, event.room_id, self.strings.get("repo_not_found").format(id=arg), edit_id=event.event_id)
+            if not is_url:
+                await utils.answer(mx, self.strings["fetching_repo"].format(id=arg))
+                
+                # Используем utils.request для получения индекса
+                repo_data = await utils.request(f"{REPO_RAW_URL}/index.json", return_type="json")
+                if not repo_data:
+                    raise Exception("Failed to fetch repository index")
+                
+                mod_info = next((m for m in repo_data.get("modules", []) if m.get("id") == arg), None)
+                
+                if not mod_info:
+                    return await utils.answer(mx, self.strings["repo_not_found"].format(id=arg))
 
-                    download_url = f"{REPO_RAW_URL}/modules/{mod_info['path']}"
-                    filename = mod_info["path"]
-                else:
-                    download_url = arg
-                    filename = Path(download_url).name
-                    if not filename.endswith(".py"):
-                        filename += ".py"
+                download_url = f"{REPO_RAW_URL}/modules/{mod_info['path']}"
+                filename = mod_info["path"]
+            else:
+                download_url = arg
+                filename = Path(download_url).name
+                if not filename.endswith(".py"):
+                    filename += ".py"
 
-                await utils.answer(mx, event.room_id, self.strings.get("downloading"), edit_id=event.event_id)
-                async with session.get(download_url, timeout=10) as resp:
-                    if resp.status != 200:
-                        raise Exception(f"HTTP {resp.status}")
-                    code = await resp.text()
+            await utils.answer(mx, self.strings["downloading"])
+            
+            # Скачиваем сам код
+            code = await utils.request(download_url, return_type="text")
+            if not code:
+                raise Exception("Failed to download module code")
 
             path = Path(self.loader.community_path) / filename
             path.write_text(code, encoding="utf-8")
 
+            # Регистрация модуля в ядре
             await self.loader.register_module(path, mx, is_core=False)
 
-            await utils.answer(mx, event.room_id, self.strings.get("done").format(name=filename), edit_id=event.event_id)
+            await utils.answer(mx, self.strings["done"].format(name=filename))
 
         except Exception as e:
-            await utils.answer(mx, event.room_id, self.strings.get("error").format(err=str(e)), edit_id=event.event_id)
-
+            await utils.answer(mx, self.strings["error"].format(err=str(e)))
 
     @loader.command()
     async def mrepo(self, mx: Any, event: MessageEvent):
-        """Отображает полный список модулей из репозитория"""
-        await utils.answer(mx, event.room_id, self.strings.get("repo_fetching_list"), edit_id=event.event_id)
+        """Show full module list from official repository"""
+        await utils.answer(mx, self.strings["repo_fetching_list"])
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{REPO_RAW_URL}/index.json") as resp:
-                    if resp.status != 200:
-                        raise Exception(f"HTTP {resp.status}")
-                    repo_data = await resp.json(content_type=None)
+            repo_data = await utils.request(f"{REPO_RAW_URL}/index.json", return_type="json")
+            print(repo_data)
+            if not repo_data:
+                raise Exception("Failed to fetch repository data")
 
             modules = repo_data.get("modules", [])
             if not modules:
-                return await utils.answer(mx, event.room_id, self.strings.get("repo_list_empty"), edit_id=event.event_id)
+                return await utils.answer(mx, self.strings["repo_list_empty"])
 
             modules.sort(key=lambda x: x.get("id", ""))
 
-            msg = self.strings.get("repo_list_header").format(count=len(modules))
-            
+            msg = self.strings["repo_list_header"].format(count=len(modules))
             for mod in modules:
-                msg += self.strings.get("repo_list_item").format(
+                msg += self.strings["repo_list_item"].format(
                     id=mod.get("id", "unknown"),
-                    desc=mod.get("description", "Без описания")
+                    desc=mod.get("description", "No description")
                 )
-            
             msg += "</details>"
 
-            await utils.answer(mx, event.room_id, msg, edit_id=event.event_id)
-
+            await utils.answer(mx, msg)
         except Exception as e:
-            await utils.answer(mx, event.room_id, self.strings.get("error").format(err=str(e)), edit_id=event.event_id)
-
+            print(e)
+            await utils.answer(mx, self.strings["error"].format(err=str(e)))
 
     @loader.command()
     async def msearch(self, mx: Any, event: MessageEvent):
-        """<запрос> — поиск модулей в официальном репозитории"""
-        parts = event.content.body.split(maxsplit=1)
-        query = parts[1].strip().lower() if len(parts) > 1 else None
-
+        """<query> — Search modules in the official repository"""
+        query = utils.get_args_raw(event)
         if not query:
-            return await utils.answer(mx, event.room_id, self.strings.get("search_no_query"), edit_id=event.event_id)
+            return await utils.answer(mx, self.strings["search_no_query"])
+
+        query = query.strip().lower()
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{REPO_RAW_URL}/index.json") as resp:
-                    if resp.status != 200:
-                        raise Exception(f"HTTP {resp.status}")
-                    repo_data = await resp.json(content_type=None)
+            repo_data = await utils.request(f"{REPO_RAW_URL}/index.json", return_type="json")
+            if not repo_data:
+                raise Exception("Failed to fetch repository data")
 
             results = []
             for mod in repo_data.get("modules", []):
                 search_text = f"{mod.get('id', '')} {mod.get('name', '')} {mod.get('description', '')} {' '.join(mod.get('tags', []))}".lower()
-                
                 if query in search_text:
                     results.append(mod)
 
             if not results:
-                return await utils.answer(mx, event.room_id, self.strings.get("search_empty").format(query=query), edit_id=event.event_id)
+                return await utils.answer(mx, self.strings["search_empty"].format(query=query))
 
-            msg = self.strings.get("search_header").format(query=query)
+            msg = self.strings["search_header"].format(query=query)
             for mod in results:
-                msg += self.strings.get("search_item").format(
+                msg += self.strings["search_item"].format(
                     name=mod.get("name"),
                     id=mod.get("id"),
                     version=mod.get("version"),
                     desc=mod.get("description")
                 )
 
-            await utils.answer(mx, event.room_id, msg, edit_id=event.event_id)
-
+            await utils.answer(mx, msg)
         except Exception as e:
-            await utils.answer(mx, event.room_id, self.strings.get("error").format(err=str(e)), edit_id=event.event_id)
-
+            await utils.answer(mx, self.strings["error"].format(err=str(e)))
 
     @loader.command()
     async def reload(self, mx: Any, event: MessageEvent):
-        """Перезагрузка всех модулей"""
+        """Reload all active modules"""
+        # Сначала отправляем сообщение, так как после выгрузки модулей мы можем потерять контекст
+        await utils.answer(mx, "⏳ Reloading all modules...")
+        
         active_names = list(mx.active_modules.keys())
 
         for name in active_names:
@@ -188,26 +177,24 @@ class LoaderModule(loader.Module):
 
         await self.loader.register_all(mx)
 
-        msg = self.strings.get("reloaded_header")
+        msg = self.strings["reloaded_header"]
         for name in mx.active_modules.keys():
-            msg += self.strings.get("module_item").format(name=name)
+            msg += self.strings["module_item"].format(name=name)
 
-        await utils.answer(mx, event.room_id, msg, edit_id=event.event_id)
-
+        await utils.answer(mx, msg)
 
     @loader.command()
     async def unmd(self, mx: Any, event: MessageEvent):
-        """<имя файла> — выгружает и безвозвратно удаляет комьюнити-модуль"""
-        parts = event.content.body.split(maxsplit=1)
-        args = parts[1] if len(parts) > 1 else None
+        """<filename> — Unload and permanently delete a community module"""
+        name = utils.get_args_raw(event)
 
-        if not args:
-            return await utils.answer(mx, event.room_id, self.strings.get("no_name"), edit_id=event.event_id)
+        if not name:
+            return await utils.answer(mx, self.strings["no_name"])
         
-        name = args.strip()
+        name = name.strip()
 
         if name not in mx.active_modules:
-            return await utils.answer(mx, event.room_id, self.strings.get("not_found").format(name=name), edit_id=event.event_id)
+            return await utils.answer(mx, self.strings["not_found"].format(name=name))
         
         try:
             await self.loader.unload_module(name, mx)
@@ -216,7 +203,6 @@ class LoaderModule(loader.Module):
             if path.exists():
                 path.unlink()
 
-            await utils.answer(mx, event.room_id, self.strings.get("unloaded").format(name=name), edit_id=event.event_id)
-
+            await utils.answer(mx, self.strings["unloaded"].format(name=name))
         except Exception as e:
-            await utils.answer(mx, event.room_id, self.strings.get("error").format(err=str(e)), edit_id=event.event_id)
+            await utils.answer(mx, self.strings["error"].format(err=str(e)))
