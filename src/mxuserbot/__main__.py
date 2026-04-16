@@ -8,7 +8,7 @@ import traceback
 from typing import Optional, Dict, Any
 
 from loguru import logger
-from mautrix.api import HTTPAPI, Method
+from mautrix.api import HTTPAPI
 from mautrix.client import Client
 from mautrix.crypto import OlmMachine
 from mautrix.crypto.store.asyncpg import PgCryptoStore, PgCryptoStateStore
