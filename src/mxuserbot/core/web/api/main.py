@@ -87,12 +87,24 @@ def setup_routes(app: FastAPI, bot_instance, auth_event):
     async def auth_endpoint(data: LoginSchema = Body(...)):
         return await auth_logic(data, bot_instance, auth_event)
     
+    @app.get("/api/locale")
+    async def get_locale():
+        import json
+        locale_path = os.path.join(os.path.dirname(__file__), "locale.json")
+        with open(locale_path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+        return data
 
     @app.get("/", response_class=HTMLResponse)
-    async def get_login_page():
-        html_path = os.path.join(os.getcwd(), "src/mxuserbot/core/web/index.html")
-        try:
-            with open(html_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Файл index.html не найден")
+    async def get_login_page(lang: str = "en"):
+        import json
+        locale_path = os.path.join(os.path.dirname(__file__), "locale.json")
+        with open(locale_path, 'r', encoding='utf-8') as f:
+            locale = json.load(f)
+        base = os.path.dirname(os.path.dirname(__file__))
+        html_path = os.path.join(base, "index.html")
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        for key, value in locale.get(lang, locale["en"]).items():
+            html = html.replace(f'[I18N:{key}]', value)
+        return html
