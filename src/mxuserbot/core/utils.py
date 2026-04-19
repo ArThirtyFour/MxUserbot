@@ -1,16 +1,20 @@
 import asyncio
+import io
 import os
 import platform
 import shlex
 from typing import Optional, Union
 
+from PIL import Image
 import aiohttp
+from loguru import logger
 import psutil
 
 from mautrix.api import Method
 from mautrix.crypto.attachments import encrypt_attachment
 from mautrix.types import (
     EncryptedEvent,
+    EncryptedFile,
     EventType,
     Format,
     ImageInfo,
@@ -21,11 +25,31 @@ from mautrix.types import (
     RelationType,
     RoomID,
     TextMessageEventContent,
+    ThumbnailInfo,
 )
 from mautrix.util.formatter import parse_html
 
 RPC_NAMESPACE = "com.ip-logger.msc4320.rpc"
 
+
+
+async def get_reply_event(mx, event: MessageEvent) -> Optional[MessageEvent]:
+    """
+    Retrieves the full event object of the message being replied to.
+    Returns the event object or None if no reply or error.
+    """
+    relates = getattr(event.content, "relates_to", None) or getattr(event.content, "_relates_to", None)
+    if not relates:
+        return None
+        
+    reply_to = getattr(relates, "in_reply_to", None)
+    if not reply_to or not reply_to.event_id:
+        return None
+
+    try:
+        return await mx.client.get_event(event.room_id, reply_to.event_id)
+    except Exception:
+        return None
 
 def get_platform() -> str:
     """Returns a formatted string containing system data."""
@@ -254,68 +278,128 @@ async def request(
                 return response
         except Exception:
             return None
+        
 
+import io
+from typing import Union, Optional
+
+from PIL import Image
+
+from mautrix.crypto.attachments import encrypt_attachment
+from mautrix.types import (
+    EventType,
+    Format,
+    ImageInfo,
+    MediaMessageEventContent,
+    MessageType,
+    ThumbnailInfo,
+)
+
+
+import io
+from typing import Union
+
+from PIL import Image
+
+from mautrix.crypto.attachments import encrypt_attachment
+from mautrix.types import (
+    EventType,
+    Format,
+    ImageInfo,
+    MediaMessageEventContent,
+    MessageType,
+    ThumbnailInfo,
+)
+import io
+from PIL import Image
+from mautrix.crypto.attachments import encrypt_attachment
+from mautrix.types import (
+    EventType, ImageInfo, MediaMessageEventContent, 
+    MessageType, ThumbnailInfo, Format, RelatesTo, RelationType
+)
+import io
+from PIL import Image
+from mautrix.crypto.attachments import encrypt_attachment
+from mautrix.types import (
+    EventType, ImageInfo, MediaMessageEventContent, 
+    MessageType, ThumbnailInfo, Format
+)
 
 async def send_image(
     mx,
-    room_id: Union[str, MessageEvent],
-    url: str | None = None,
+    room_id,
     file_bytes: bytes | None = None,
-    info: ImageInfo | None = None,
-    file_name: str | None = None,
+    url: str | None = None,
+    file_name: str = "image.png",
     caption: str | None = None,
-    relates_to=None,
-    html: bool = True,
-    **kwargs,
+    info: ImageInfo | None = None,
+    **kwargs
 ):
-    """Downloads (if necessary), optionally encrypts, and sends an image to a specific room."""
+    """Адекватная отправка изображений: E2EE + Thumbnail + Key Share"""
     if not isinstance(room_id, str):
         room_id = room_id.room_id
 
-    if isinstance(url, bytes) and file_bytes is None:
-        file_bytes = url
-        url = None
-
+    # 1. Получаем байты (из аргументов или по ссылке)
     if not file_bytes and url:
-        if isinstance(url, str) and url.startswith("http"):
+        if url.startswith("http"):
             file_bytes = await request(url, return_type="bytes")
-        elif isinstance(url, str) and url.startswith("mxc://"):
+        elif url.startswith("mxc://"):
             file_bytes = await mx.client.download_media(url)
-
+    
     if not file_bytes:
-        raise ValueError("Failed to retrieve image bytes")
+        raise ValueError("send_image: No bytes provided")
 
-    file_name = file_name or "image.png"
-    mime_type = info.mimetype if info else "image/png"
+    img_obj = Image.open(io.BytesIO(file_bytes))
+    w, h = img_obj.size
     
-    is_enc = await mx.client.state_store.is_encrypted(room_id)
+    thumb_bytes = None
+    try:
+        thumb_img = img_obj.copy()
+        thumb_img.thumbnail((400, 400))
+        t_io = io.BytesIO()
+        thumb_img.save(t_io, format="PNG")
+        thumb_bytes = t_io.getvalue()
+        tw, th = thumb_img.size
+    except: pass
+
+    is_enc = await mx.client.state_store.is_encrypted(room_id) if mx.client.crypto else False
     
+    if not info:
+        info = ImageInfo(mimetype="image/png", size=len(file_bytes), width=w, height=h)
+
     content = MediaMessageEventContent(
         msgtype=MessageType.IMAGE,
-        body=file_name,
-        info=info or ImageInfo(mimetype=mime_type),
+        body=caption or file_name,
+        info=info
     )
 
     if is_enc:
-        encrypted_data, file_info = encrypt_attachment(file_bytes)
-        mxc_url = await mx.client.upload_media(encrypted_data, mime_type=mime_type)
-        file_info.url = mxc_url
-        content.file = file_info
+        
+        members = await mx.client.state_store.get_members(room_id)
+        await mx.client.crypto.wait_group_session_share(room_id)
+
+        if thumb_bytes:
+            et, ti = encrypt_attachment(thumb_bytes)
+            ti.url = await mx.client.upload_media(et, mime_type="application/octet-stream")
+            content.info.thumbnail_file = ti
+            content.info.thumbnail_info = ThumbnailInfo(
+                mimetype="image/png", size=len(thumb_bytes), width=tw, height=th
+            )
+
+        ed, fi = encrypt_attachment(file_bytes)
+        fi.url = await mx.client.upload_media(ed, mime_type="application/octet-stream", filename=file_name)
+        
+        content.file = fi
+        content.url = None
     else:
-        mxc_url = await mx.client.upload_media(file_bytes, mime_type=mime_type)
-        content.url = mxc_url
+        if thumb_bytes:
+            thumb_url = await mx.client.upload_media(thumb_bytes, mime_type="image/png")
+            content.info.thumbnail_url = thumb_url
+            content.info.thumbnail_info = ThumbnailInfo(mimetype="image/png", size=len(thumb_bytes), width=tw, height=th)
+        
+        content.url = await mx.client.upload_media(file_bytes, mime_type="image/png", filename=file_name)
 
-    if caption:
-        content.body = caption
-        if html:
-            content.format = Format.HTML
-            content.formatted_body = caption
-
-    if relates_to:
-        content.relates_to = relates_to
-
-    return await mx.client.send_message_event(room_id, EventType.ROOM_MESSAGE, content, **kwargs)
-
+    return await mx.client.send_message_event(room_id, EventType.ROOM_MESSAGE, content)
 
 async def set_rpc_media(
     mx,
@@ -499,21 +583,24 @@ async def get_module_file(mx, event) -> tuple[str, bytes]:
 from pathlib import Path
 
 
-async def install_module(mx, filename: str, code: str) -> bool:
-    """Сохраняет код модуля и регистрирует его через ядро."""
-    loader = mx._bot.all_modules
-    
-    path = Path(loader.community_path) / filename
-    path.write_text(code, encoding="utf-8")
-    
-    await loader.register_module(path, mx, is_core=False)
-    
-    if path.stem in mx.active_modules:
-        return True
-    
-    if path.exists(): 
-        path.unlink()
-    return False
+async def install_module_file(loader, mx, filename: str, code: str) -> bool:
+    """
+    Сохраняет код модуля в папку community и регистрирует его.
+    Используется в .mdl dev
+    """
+    try:
+        path = Path(loader.community_path) / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        path.write_text(code, encoding="utf-8")
+        
+        await loader.register_module(path, mx, is_core=False)
+        
+        return path.stem in mx.active_modules
+    except Exception as e:
+        mx.logger.error(f"Module install error: {e}")
+        return False
+
 
 
 async def uninstall_module(mx, name: str):
@@ -586,3 +673,95 @@ async def search_modules_in_repo(query: str, system_repo: str, community_repos: 
                 })
         except: continue
     return results
+
+
+async def get_matrix_file_content(mx, event) -> tuple[str, bytes]:
+    """
+    Извлекает имя файла и его байты из сообщения Matrix (включая E2EE).
+    Возвращает (filename, bytes).
+    """
+    if isinstance(event, EncryptedEvent):
+        try:
+            decrypted = await mx.client.crypto.decrypt_megolm_event(event)
+            content = decrypted.content
+        except Exception as e:
+            raise ValueError("decrypt_err") from e
+    else:
+        content = event.content
+
+    if content.msgtype != MessageType.FILE:
+        raise ValueError("not_a_file")
+
+    filename = content.body
+    if content.file:
+        ciphertext = await mx.client.download_media(content.file.url)
+        code_bytes = decrypt_attachment(
+            ciphertext, 
+            content.file.key.key, 
+            content.file.hashes.get("sha256"), 
+            content.file.iv
+        )
+    else:
+        code_bytes = await mx.client.download_media(content.url)
+        
+    return filename, code_bytes
+
+import os
+import subprocess
+from pathlib import Path
+from typing import List
+
+COMM_DIR = Path(__file__).resolve().parents[1] / "modules" / "community"
+
+def _get_safe_path(filename: str) -> Path:
+    """Гарантирует, что путь находится внутри community и файл не является кодом"""
+    safe_name = os.path.basename(filename)
+    final_path = (COMM_DIR / safe_name).resolve()
+
+    if COMM_DIR not in final_path.parents and final_path != COMM_DIR:
+        raise PermissionError("Security: Access restricted to community folder only.")
+
+    forbidden_ext = {".py", ".pyc", ".sh", ".bash", ".exe", ".so", ".dll"}
+    if final_path.suffix.lower() in forbidden_ext:
+        raise PermissionError(f"Security: Prohibited file extension: {final_path.suffix}")
+
+    return final_path
+
+async def safe_save(file_bytes: bytes, filename: str) -> str:
+    """Ядро сохраняет байты в файл внутри community"""
+    path = _get_safe_path(filename)
+    with open(path, "wb") as f:
+        f.write(file_bytes)
+    return str(path)
+
+async def safe_remove(filename: str):
+    """Ядро удаляет файл внутри community"""
+    path = _get_safe_path(filename)
+    if path.exists():
+        os.remove(path)
+
+async def ffmpeg_run(args: List[str]) -> bool:
+    """
+    Универсальный запуск FFmpeg. 
+    Автоматически проверяет все пути в аргументах на безопасность.
+    """
+    safe_args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    
+    # Сканируем аргументы: если это путь, прогоняем через фильтр
+    for arg in args:
+        if "/" in arg or "\\" in arg or "." in arg:
+            try:
+                # Если аргумент похож на путь, делаем его безопасным
+                safe_args.append(str(_get_safe_path(arg)))
+            except:
+                safe_args.append(arg) # Если не путь (например, кодек), оставляем
+        else:
+            safe_args.append(arg)
+
+    process = await asyncio.create_subprocess_exec(
+        *safe_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    await process.wait()
+    return process.returncode == 0
