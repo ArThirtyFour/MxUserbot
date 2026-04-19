@@ -68,7 +68,7 @@ class LoaderModule(loader.Module):
             await asyncio.sleep(5)
             self.config.set("repo_warn_ok", True)
 
-        repos = await utils.get_community_repos(self._db)
+        repos = await utils.get_community_repo(self._db)
         if url not in repos:
             repos.append(url)
             await utils.set_community_repos(self._db, repos)
@@ -82,7 +82,7 @@ class LoaderModule(loader.Module):
         if not args: return await utils.answer(mx, self.strings.get("error_url"))
         
         url = utils.convert_repo_url(args[0])
-        repos = await utils.get_community_repos(self._db)
+        repos = await utils.get_community_repo(self._db)
         
         if url in repos:
             repos.remove(url)
@@ -132,7 +132,7 @@ class LoaderModule(loader.Module):
         
         await utils.answer(mx, self.strings.get("fetching").format(id=target))
 
-        repos = await utils.get_community_repos(self._db)
+        repos = await utils.get_community_repo(self._db)
         system_repo = self.config.get("repo_url")
         url, filename, from_community, needs_dev_warning = await utils.resolve_module_target(
             target, system_repo, repos, utils.request
@@ -170,7 +170,7 @@ class LoaderModule(loader.Module):
         if not args: return await utils.answer(mx, self.strings.get("search_no_query"))
 
         query = " ".join(args).lower()
-        repos = await utils.get_community_repos(self._db)
+        repos = await utils.get_community_repo(self._db)
         
         results_data = await utils.search_modules_in_repos(query, self.config.get("repo_url"), repos, utils.request)
 
