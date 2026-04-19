@@ -190,6 +190,33 @@ async def get_args_raw(mx, event) -> str:
     return cmd_args
 
 
+async def pin(mx, room_id: str, event_id: str, unpin: bool = False):
+
+    try:
+        try:
+            current_state = await mx.client.get_state_event(room_id, EventType.ROOM_PINNED_EVENTS)
+            pinned = current_state.get("pinned", []) if current_state else []
+        except Exception:
+            pinned = []
+
+        if unpin:
+            if event_id in pinned:
+                pinned.remove(event_id)
+        else:
+            if event_id not in pinned:
+                pinned.append(event_id)
+
+        return await mx.client.send_state_event(
+            room_id=room_id,
+            event_type=EventType.ROOM_PINNED_EVENTS,
+            content={"pinned": pinned},
+            state_key=""
+        )
+    except Exception as e:
+        mx.logger.error(f"Failed to pin/unpin {event_id}: {e}")
+        return None
+
+
 async def answer(
     mx,
     text: str,
