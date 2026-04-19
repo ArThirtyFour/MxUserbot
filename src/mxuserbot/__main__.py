@@ -1,3 +1,4 @@
+from ast import List
 import asyncio
 import contextvars
 import logging
@@ -91,306 +92,139 @@ class MXBotInterface:
 
 from mautrix.client import InternalEventType
 
+
 class MXUserBot(Program):
-    """Main userbot class."""
-    
+    """Main userbot class, refactored by a pro."""
+
     def __init__(self) -> None:
         super().__init__(
-            module='main',
-            name='MXUserBot',
+            module='main', name='MXUserBot',
             description="MXUserbot - matrix userbot.",
-            command="-",
-            version="1.5 | BETA",
-            config_class=Config
+            command="-", version="1.5 | BETA", config_class=Config
         )
         self.client: Optional[Client] = None
-        self.logger = logger
         self._db: Optional[Database] = None
         self.all_modules: Optional[Loader] = None
         self.security: Optional[SekaiSecurity] = None
         
         self.active_modules: Dict[str, Any] = {}
-        self.module_aliases: Dict[str, str] = {}  
-        self.uri_cache: Dict[str, Any] = {}
+        self.interface = MXBotInterface(self)
+        self.auth_completed = asyncio.Event()
         
         self.start_time: Optional[int] = None
-        self.join_time: Optional[int] = None
-        self.interface = MXBotInterface(self) 
-
-        self.auth_completed = asyncio.Event()
-
-    async def _setup_logs(self) -> str:
-            log_room_id = await self._db.get("core", "log_room_id")
-            if log_room_id:
-                return str(log_room_id)
-
-            try:
-                joined_rooms = await self.client.get_joined_rooms()
-            except Exception as e:
-                joined_rooms =[]
-
-            target_name = "[LOGS] | MX-USERBOT"
-            found_id = None
-
-            async def check_room_name(rid):
-                try:
-                    name_evt = await self.client.get_state_event(rid, EventType.ROOM_NAME)
-                    if name_evt and name_evt.get("name") == target_name:
-                        return rid
-                except Exception:
-                    return None
-
-            if joined_rooms:
-                results = await asyncio.gather(*[check_room_name(rid) for rid in joined_rooms])
-                for res in results:
-                    if res:
-                        found_id = res
-                        break
-
-            if found_id:
-                await self._db.set("core", "log_room_id", str(found_id))
-                return str(found_id)
-
-            
-            avatar_url = "mxc://pashahatsune.pp.ua/hGaNZRrDKOF5HlHjZ8VilRWj5QHFOXoy"
-            initial_state =[
-                {
-                    "type": "m.room.avatar",
-                    "state_key": "",
-                    "content": {"url": avatar_url}
-                }
-            ]
-
-            try:
-                new_room_id = await self.client.create_room(
-                    name=target_name,
-                    topic="Technical room for system notifications and logs",
-                    is_direct=True,
-                    visibility=RoomDirectoryVisibility.PRIVATE,
-                    initial_state=initial_state
-                )
-                
-                await self.client.join_room(new_room_id)
-                await self.client.set_room_tag(new_room_id, "m.favourite", {"order": 0.0})
-                
-                await self._db.set("core", "log_room_id", str(new_room_id))
-                
-                await utils.answer(
-                    self.interface, 
-                    "✅ | Log room successfully initialized.", 
-                    room_id=new_room_id,
-                    edit_id=None
-                )
-
-                return str(new_room_id)
-
-            except Exception as e:
-                raise e
+        self._prefixes: List[str] = ["."]
 
 
+    async def _get_core_conf(self, key: str, default: Any = None) -> Any:
+        """Быстрый доступ к конфигу ядра в БД."""
+        return await self._db.get("core", key, default)
 
 
+    async def get_prefix(self) -> str:
+        """Возвращает основной префикс."""
+        return self._prefixes[0] if self._prefixes else "."
 
-    async def starts_with_command(self, body: str) -> bool:
-        """Checks if the message starts with an active prefix."""
-        prefixes = await self._db.get(owner="core", key="prefix")
-        return body.startswith(tuple(prefixes))
+
+    async def is_owner(self, evt: Any) -> bool:
+        """Проверка на владельца."""
+        owner_id = await self._get_core_conf("owner")
+        return evt.sender == owner_id
+
 
     def should_ignore_event(self, evt: MessageEvent) -> bool:
-        if evt.timestamp < (self.start_time - 10000):
-            logger.debug(f"Ignoring old event: {evt.timestamp} < {self.start_time}")
-            return True
-
+        """Фильтрация старого говна и пустых сообщений."""
         if not evt.content.body:
             return True
-            
-        return False
+        return evt.timestamp < (self.start_time - 10000)
 
-    async def is_owner(self, evt: StateEvent) -> bool:
-        """Checks if the sender is the bot owner."""
-        owner = await self._db.get("core", "owner")
-        return evt.sender == owner
 
     def _setup_loguru(self) -> None:
-        """Loguru formatting and handlers setup."""
+        """Настройка красивого логгера."""
         logging.basicConfig(handlers=[InterceptHandler()], level="INFO", force=True)
         logger.remove()
-        
         log_format = (
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
             "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-            "<level>{message}</level>"
+            "<cyan>{name}:{function}:{line}</cyan> - <level>{message}</level>"
         )
         logger.add(sys.stdout, format=log_format, colorize=True)
-
-
-        
-
-    def prepare_log(self) -> None:
-        """Logging initialization."""
-        self._setup_loguru()
         self.log = logger.bind(name=self.name)
 
-    def prepare(self) -> None:
-        """Preparing the bot for startup."""
-        super().prepare()
-        self.add_startup_actions(self.run_api())
-        self.add_startup_actions(self.setup_userbot())
 
-    async def run_api(self):
-        """Launching FastAPI server without signal conflicts."""
-        from .core.web.api.main import setup_routes
-        from fastapi import FastAPI
-        import uvicorn
-        
-        app = FastAPI(title="Sekai Bot API")
-        setup_routes(app, self, self.auth_completed)
-        
-        config = uvicorn.Config(
-            app, 
-            host="0.0.0.0", 
-            port=8000, 
-            log_level="info",
-            loop="uvloop"
-        )
-        server = uvicorn.Server(config)
-
-        server.install_signal_handlers = lambda: None
-
-        async def safe_serve():
-            try:
-                await server.serve()
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                pass
-            except Exception as e:
-                self.log.error(f"API Server Error: {e}")
-
-        asyncio.create_task(safe_serve())
-        self.log.info("🌐 API server running at http://0.0.0.0:8000")
-
-    async def get_args(self, body: str) -> str:
-        """Extracts command arguments (text after the command)."""
-        prefixes = await self._db.get(owner="core", key="prefix")
-        for prefix in prefixes:
-            if body.startswith(prefix):
-                cmd_part = body[len(prefix):]
-                parts = cmd_part.split(maxsplit=1)
-                return parts[1] if len(parts) > 1 else ""
-        return ""
-
-    async def _load_prefixes(self) -> None:
-        """Loading prefixes from DB at startup."""
-        db_result = await self._db.get("core", "prefix", None)
-
-        if not db_result:
-            db_result = await self._db.set(
-                owner='core',
-                key="prefix",
-                value=["."]
-            )
-            
-        logger.success(f"Prefixes loaded: {await self._db.get(owner='core', key='prefix')}")
-
-    async def _setup_security(self) -> None:
-        """Initializing security subsystem."""
-        self.security = SekaiSecurity(self)
-        await self.security.init_security()
-
-    async def _register_handlers(self) -> None:
-        """Registering event handlers (Matrix)."""
-        cb = CallBack(self)
-        
-        self.client.add_event_handler(
-            EventType.ROOM_MEMBER, 
-            self.security.gate(cb.invite_cb)
-        )
-        self.client.add_event_handler(
-            EventType.ROOM_MEMBER, 
-            cb.memberevent_cb
-        )
-
-        if hasattr(cb, "message_cb"):
-            self.client.add_event_handler(
-                EventType.ROOM_MESSAGE, 
-                cb.message_cb
-            )
-
-    async def get_prefix(self) -> str:
-        """Safe getter for receiving the main prefix."""
-        db_result = await self._db.get("core", "prefix")
-        return db_result[0]
-
-    async def setup_userbot(self) -> None:
+    async def _init_database(self) -> None:
+        """Инициализация основной БД."""
+        session_wrapper = AsyncSessionWrapper()
+        self._db = Database(session_wrapper)
         try:
-            session_wrapper = AsyncSessionWrapper() 
-            self._db = Database(session_wrapper)
-            
+            await self._db._sw.init_db()
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                raise e
+        self.config.db = self._db
+
+
+    async def _setup_logs(self) -> str:
+        """Поиск или создание комнаты логов. Без дубликатов."""
+        log_room_id = await self._get_core_conf("log_room_id")
+        if log_room_id:
+            return str(log_room_id)
+
+        target_name = "[LOGS] | MX-USERBOT"
+        self.log.info(f"Ищу комнату {target_name}...")
+        
+        rooms = await self.client.get_joined_rooms()
+        
+        async def check_name(rid):
             try:
-                await self._db._sw.init_db()
-            except Exception as e:
-                if "already exists" in str(e).lower():
-                    self.log.debug("Таблицы БД уже существуют, пропускаю создание.")
-                else:
-                    self.log.error(f"Ошибка инициализации БД: {e}")
-                    raise e
+                st = await self.client.get_state_event(rid, EventType.ROOM_NAME)
+                return rid if st and st.get("name") == target_name else None
+            except: return None
 
-            self.config.db = self._db
-            access_token = await self._db.get("core", "access_token")
+        found = await asyncio.gather(*[check_name(r) for r in rooms])
+        log_room_id = next((res for res in found if res), None)
 
-            if not access_token:
-                self.log.warning("⚠️ | Authorization data not found!!")
-                self.log.info("🌐 | open http://127.0.0.1:8000/ to authorize.")
-                
-                await self.auth_completed.wait()
-                access_token = await self._db.get("core", "access_token")
-                
-                self.log.success("✅ Авторизация получена. Запускаю криптографию...")
+        if not log_room_id:
+            self.log.warning("Комната не найдена, создаю новую...")
+            avatar = "mxc://pashahatsune.pp.ua/hGaNZRrDKOF5HlHjZ8VilRWj5QHFOXoy"
+            log_room_id = await self.client.create_room(
+                name=target_name, is_direct=True,
+                initial_state=[{"type": "m.room.avatar", "content": {"url": avatar}}]
+            )
+            await self.client.join_room(log_room_id)
+            msg_id = await utils.answer(self.interface, "✅ | Log room initialized.", room_id=log_room_id)
+            if msg_id:
+                await utils.pin(self.interface, log_room_id, msg_id)
 
+        await self._db.set("core", "log_room_id", str(log_room_id))
+        return str(log_room_id)
+
+
+    async def _init_crypto(self, username: str, device_id: str):
+            """Вся еботня с криптографией здесь (логика не менялась, но исправлен порядок)."""
             db_path = os.path.join(os.getcwd(), "sekai.db")
             self.crypto_db = MautrixDatabase.create(f"sqlite:///{db_path}")
-            await self.crypto_db.start() 
+            await self.crypto_db.start()
 
-            base_url = await self._db.get("core", "base_url")
-            username = await self._db.get("core", "username")
-            device_id = await self._db.get("core", "device_id")
-            
             await PgCryptoStore.upgrade_table.upgrade(self.crypto_db)
             await PgCryptoStateStore.upgrade_table.upgrade(self.crypto_db)
 
             self.state_store = PgCryptoStateStore(self.crypto_db)
             self.crypto_store = PgCryptoStore(username, "sekai_secret_pickle_key", self.crypto_db)
 
-            self.client = Client(
-                api=HTTPAPI(base_url=base_url),
-                state_store=self.state_store,
-                sync_store=self.crypto_store
-            )
-            self.client.api.token = access_token
-            self.client.mxid = username
-            self.client.device_id = device_id
+            self.client.state_store = self.state_store
+            self.client.sync_store = self.crypto_store 
 
             self.client.crypto = OlmMachine(self.client, self.crypto_store, self.state_store)
             self.client.crypto.allow_key_requests = True
             await self.client.crypto.load()
 
-            self.sas_verifier = BotSASVerification(self.client)
-            
-            original_decrypt = self.client.crypto._decrypt_olm_event
-
+            orig_decrypt = self.client.crypto._decrypt_olm_event
             async def hooked_decrypt(evt):
-                try:
-                    decrypted = await original_decrypt(evt)
-                    if decrypted:
-                        t = decrypted.type.t if hasattr(decrypted.type, "t") else str(decrypted.type)
-                        if "m.key.verification" in t:
-                            self.log.info(f"🔑 | verif request: {t}")
-                            asyncio.create_task(self.sas_verifier.handle_decrypted_event(decrypted))
-                    return decrypted
-                except Exception as e:
-                    self.log.error(f"Oshibka rashifrovki: {e}")
-                    return None
-
+                dec = await orig_decrypt(evt)
+                if dec and "m.key.verification" in (dec.type.t if hasattr(dec.type, "t") else str(dec.type)):
+                    asyncio.create_task(self.sas_verifier.handle_decrypted_event(dec))
+                return dec
+            
             self.client.crypto._decrypt_olm_event = hooked_decrypt
 
             if not await self.crypto_store.get_device_id():
@@ -398,76 +232,114 @@ class MXUserBot(Program):
                 await self.client.crypto.share_keys()
 
 
-            self.log.info("📡 | Checking connection to Matrix server...")
+    async def starts_with_command(self, body: str) -> bool:
+        return body.startswith(tuple(self._prefixes))
+
+
+    async def _setup_security(self) -> None:
+        """Initializing security subsystem."""
+        self.security = SekaiSecurity(self)
+        await self.security.init_security()
+
+
+    def prepare_log(self) -> None:
+        self._setup_loguru()
+
+
+    def prepare(self) -> None:
+        super().prepare()
+        self.add_startup_actions(self.run_api())
+        self.add_startup_actions(self.setup_userbot())
+
+
+    async def run_api(self):
+        """Запуск FastAPI без лишнего шума."""
+        from .core.web.api.main import setup_routes
+        from fastapi import FastAPI
+        import uvicorn
+        
+        app = FastAPI(title="Sekai Bot API")
+        setup_routes(app, self, self.auth_completed)
+        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="error"))
+        server.install_signal_handlers = lambda: None
+        asyncio.create_task(server.serve())
+        self.log.info(f"🌐 | API running: http://{server.config.host}:{server.config.port}")
+
+
+    async def setup_userbot(self) -> None:
+        try:
+            await self._init_database()
+            
+            token = await self._get_core_conf("access_token")
+            if not token:
+                self.log.warning("🔑 | auth not found. Please auth.")
+                await self.auth_completed.wait()
+                token = await self._get_core_conf("access_token")
+
+            base_url = await self._get_core_conf("base_url")
+            username = await self._get_core_conf("username")
+            device_id = await self._get_core_conf("device_id")
+
+            self.client = Client(api=HTTPAPI(base_url=base_url))
+            self.client.api.token, self.client.mxid, self.client.device_id = token, username, device_id
+
+            await self._init_crypto(username, device_id)
+            self.sas_verifier = BotSASVerification(self.client)
+
             while True:
                 try:
                     await self.client.whoami()
-                    break # Connection success
+                    break
                 except (MatrixConnectionError, OSError):
-                    self.log.error("🌐 Network is unreachable. Retrying in 5 seconds...")
+                    self.log.error("🌐 Сеть недоступна, ретрай через 5 сек...")
                     await asyncio.sleep(5)
 
-
             await self._setup_logs()
-
             from .core.log import MXLog
-            
             self.matrix_sink = MXLog(self)
-            
-            logger.add(
-                self.matrix_sink.write, 
-                level="ERROR", 
-                format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}"
-            )
+            logger.add(self.matrix_sink.write, level="WARNING")
             
             await self._setup_security()
             
             self.all_modules = Loader(self._db)
             await self.all_modules.register_all(self.interface)
             self.active_modules = self.all_modules.active_modules
-
-            await self._load_prefixes()
-            await self._register_handlers()
+            
+            self._prefixes = await self._get_core_conf("prefix", ["."])
+            cb = CallBack(self)
+            self.client.add_event_handler(EventType.ROOM_MEMBER, self.security.gate(cb.invite_cb))
+            self.client.add_event_handler(EventType.ROOM_MEMBER, cb.memberevent_cb)
+            if hasattr(cb, "message_cb"):
+                self.client.add_event_handler(EventType.ROOM_MESSAGE, cb.message_cb)
 
             self.start_time = int(time.time() * 1000)
             
             sync_started = asyncio.Event()
-
-            async def handle_first_sync(data):
-                if not sync_started.is_set():
-                    sync_started.set()
-                    self.client.remove_event_handler(InternalEventType.SYNC_SUCCESSFUL, handle_first_sync)
-
-            self.client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, handle_first_sync)
-
-            self.log.info("📡 | Connecting to Matrix server...")
-            sync_task = self.client.start(filter_data=None)
+            async def on_sync(_): 
+                sync_started.set()
+                self.client.remove_event_handler(InternalEventType.SYNC_SUCCESSFUL, on_sync)
             
-            if asyncio.iscoroutine(sync_task):
-                sync_task = asyncio.create_task(sync_task)
+            self.client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, on_sync)
+            
+            sync_result = self.client.start(filter_data=None)
+            if asyncio.iscoroutine(sync_result):
+                asyncio.create_task(sync_result)
 
             try:
                 await asyncio.wait_for(sync_started.wait(), timeout=30)
-                self.log.success(f"✅ | UserBot successfully synced and running: {self.client.mxid}")
-                                
+                self.log.success(f"🚀 Юзербот запущен: {self.client.mxid}")
             except asyncio.TimeoutError:
-                self.log.error("❌ | Connection timeout: Server is not responding to sync.")
-            
+                self.log.error("❌ Таймаут: сервер не отвечает на синхронизацию.")
 
         except Exception as e:
-
-            self.log.exception(f"{e}")
-        except MatrixConnectionError:
-            print(1)
+            self.log.exception(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
             sys.exit(1)
 
 
 if __name__ == "__main__":
     try:
-        bot = MXUserBot()
-        bot.run()
+        MXUserBot().run()
     except KeyboardInterrupt:
-        logger.info("Работа бота завершена пользователем (Ctrl+C).")
-        sys.exit(1)
+        sys.exit(0)
     except Exception:
-        traceback.print_exc(file=sys.stderr)
+        traceback.print_exc()
