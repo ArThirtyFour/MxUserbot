@@ -13,17 +13,26 @@ from loguru import logger
 from . import utils
 from .types import Module, ConfigValue
 
+from .security import SUDO, OWNER, EVERYONE
+
+
+SUDO = SUDO
+OWNER = OWNER
+EVERYONE = EVERYONE
+
+
+def command(name=None, security=SUDO):
+    def decorator(func):
+        func.is_command = True
+        func.command_name = (name or func.__name__).lower()
+        func.security = security
+        return func
+    return decorator
+
 _MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
 
 def _calc_module_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest()
-
-def command(name=None):
-    def decorator(func):
-        func.is_command = True
-        func.command_name = (name or func.__name__).lower()
-        return func
-    return decorator
 
 
 def tds(cls):
@@ -66,73 +75,7 @@ def tds(cls):
 
 
     return cls
-import os
-import sys
-import typing
-import shutil
-import inspect
-import hashlib
-import asyncio
-import importlib.util
-from functools import wraps
-from pathlib import Path
-from loguru import logger
 
-from . import utils
-from .types import Module 
-
-_MODULE_NAME_BY_HASH: typing.Dict[str, str] = {}
-
-def _calc_module_hash(source: str) -> str:
-    return hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest()
-
-def command(name=None):
-    def decorator(func):
-        func.is_command = True
-        func.command_name = (name or func.__name__).lower()
-        return func
-    return decorator
-
-
-def tds(cls):
-    """Decorator that makes triple-quote docstrings translatable for commands"""
-    if not hasattr(cls, 'strings'):
-        cls.strings = {}
-
-    @wraps(cls._internal_init)
-    async def _internal_init(self, *args, **kwargs):
-        def proccess_decorators(mark: str, obj: str):
-            nonlocal self
-            for attr in dir(func_):
-                if (
-                    attr.endswith("_doc")
-                    and len(attr) == 6
-                    and isinstance(getattr(func_, attr), str)
-                ):
-                    var = f"strings_{attr.split('_')[0]}"
-                    if not hasattr(self, var):
-                        setattr(self, var, {})
-
-                    getattr(self, var).setdefault(f"{mark}{obj}", getattr(func_, attr))
-
-        for command_, func_ in utils.get_commands(cls).items():
-            proccess_decorators("_cmd_doc_", command_)
-            try:
-                func_.__doc__ = self.strings[f"_cmd_doc_{command_}"]
-            except AttributeError:
-                func_.__func__.__doc__ = self.strings[f"_cmd_doc_{command_}"]
-
-        return await self._internal_init._old_(self, *args, **kwargs)
-
-    _internal_init._old_ = cls._internal_init
-    cls._internal_init = _internal_init
-
-    for command_, func in utils.get_commands(cls).items():
-        cmd_doc = func.__doc__
-        if cmd_doc:
-            cls.strings.setdefault(f"_cmd_doc_{command_}", inspect.cleandoc(cmd_doc))
-
-    return cls
 
 
 class ScopedDatabase:
@@ -260,6 +203,12 @@ class Loader:
                     loader_to_pass = self.active_modules
                 
                 await instance._internal_init(short_name, db_to_pass, loader_to_pass, is_core=is_core)
+
+            if hasattr(instance, "commands"):
+                for cmd_name, func in instance.commands.items():
+                    # func — это bound method. Берем реальную функцию через __func__!
+                    func.__func__.module_class_name = cls.__name__
+            # ----------------------------------------------
 
             self._apply_metadata(instance, spec)
             
