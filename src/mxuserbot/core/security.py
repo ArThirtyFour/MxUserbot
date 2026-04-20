@@ -11,7 +11,7 @@ OWNER = 1 << 0
 SUDO = 1 << 1        
 EVERYONE = 1 << 2    
 ALL = (1 << 3) - 1   
-DEFAULT_PERMISSIONS = OWNER
+DEFAULT_PERMISSIONS = SUDO
 
 def _sec(func, flags: int):
     prev = getattr(func, "security", 0)
@@ -49,6 +49,7 @@ class SekaiSecurity:
         }
 
     async def init_security(self):
+        self.mod_perms = await self._db.get("core", "mod_perms", {})
         try:
             resp = await self.bot.client.whoami()
             self.owners.add(resp.user_id)
@@ -176,3 +177,47 @@ class SekaiSecurity:
         cur = time.time()
         self.tsec_users =[r for r in self.tsec_users if not r.get("expires") or r["expires"] > cur]
         return any(r["target"] == sid and r["command"] == cmd for r in self.tsec_users)
+    
+    async def check_access(self, sender: str, func, cmd_name: str) -> bool:
+            if sender in self.owners:
+                return True
+            
+            cfg = getattr(func, "security", DEFAULT_PERMISSIONS)
+            if cfg & EVERYONE:
+                return True
+            
+            if (cfg & SUDO) and (sender in self.sudos):
+                return True
+            
+            user_allowed = self.mod_perms.get(sender,[])
+            if not user_allowed:
+                return False
+
+            if cmd_name in user_allowed:
+                return True
+                
+            mod_class = getattr(func, "module_class_name", None)
+            
+            if not mod_class: 
+                instance = getattr(func, "__self__", None)
+                if instance:
+                    mod_class = instance.__class__.__name__
+
+            if mod_class and mod_class.lower() in user_allowed:
+                return True
+
+            cur = time.time()
+            return any(
+                r["target"] == sender and 
+                r["command"] == cmd_name and 
+                (not r.get("expires") or r["expires"] > cur)
+                for r in self.tsec_users
+            )
+
+    def gate(self, func):
+        @wraps(func)
+        async def wrapper(event, *args, **kwargs):
+            if await self.check_access(event.sender, func):
+                return await func(event, *args, **kwargs)
+            return
+        return wrapper
