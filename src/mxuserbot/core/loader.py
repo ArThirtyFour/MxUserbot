@@ -113,6 +113,7 @@ class Loader:
         self.community_path = self.module_path / "community"
 
         self._background_tasks: typing.Set[asyncio.Task] = set()
+        self.command_registry: typing.Dict[str, typing.Dict[str, typing.Any]] = {} 
 
 
     async def register_all(
@@ -235,6 +236,12 @@ class Loader:
                     if getattr(attr, "is_watcher", False):
                         instance._watchers.append(attr)
 
+                for cmd_name, func in instance.commands.items():
+                    self.command_registry[cmd_name] = {
+                        "module": instance,
+                        "func": func
+                    }    
+
             self._apply_metadata(instance, spec)
             
             self.active_modules[short_name] = instance
@@ -256,6 +263,10 @@ class Loader:
             return False
 
         instance = self.active_modules[name]
+
+        if hasattr(instance, "commands"):
+            for cmd_name in instance.commands.keys():
+                self.command_registry.pop(cmd_name, None)
 
         try:
             if hasattr(instance, "_matrix_stop"):
@@ -296,6 +307,8 @@ class Loader:
                 await instance._matrix_start(bot)
             
             instance._is_ready = True
+
+
             
             logger.success(f"Module {name} is started!")
         except Exception as e:
