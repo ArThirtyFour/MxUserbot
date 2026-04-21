@@ -120,70 +120,77 @@ class CallBack:
             cmd_name = cmd_payload[0].lower()
             args_str = cmd_payload[1] if len(cmd_payload) > 1 else ""
 
-            for mod in self.mx.active_modules.values():
-                if not mod.enabled or cmd_name not in mod.commands:
-                    continue
+            # for mod in self.mx.active_modules.values():
+            #     if not mod.enabled or cmd_name not in mod.commands:
+            #         continue
                 
-                func = mod.commands[cmd_name]
-                if not await self.mx.security.check_access(evt.sender, func, cmd_name):
+            cmd_info = self.mx.all_modules.command_registry.get(cmd_name)
+
+            if not cmd_info:
+                return
+            
+            mod = cmd_info["module"]
+            func = cmd_info["func"]
+            
+            if not await self.mx.security.check_access(evt.sender, func, cmd_name):
+                return
+
+            if hasattr(mod, "config") and hasattr(mod.config, "get_missing_required"):
+                missing = mod.config.get_missing_required()
+                if missing:
+                    desc = mod.config.get_description(missing)
+                    await wrapped.reply(
+                        f"❌ <b>Config required:</b> {mod.name}<br>"
+                        f"Key <code>{missing}</code> ({desc}) is empty.<br>"
+                        f"Use: <code>{prefix}cfg {mod.name} {missing} [value]</code>"
+                    )
                     return
 
-                if hasattr(mod, "config") and hasattr(mod.config, "get_missing_required"):
-                    missing = mod.config.get_missing_required()
-                    if missing:
-                        desc = mod.config.get_description(missing)
-                        await wrapped.reply(
-                            f"❌ <b>Config required:</b> {mod.name}<br>"
-                            f"Key <code>{missing}</code> ({desc}) is empty.<br>"
-                            f"Use: <code>{prefix}cfg {mod.name} {missing} [value]</code>"
-                        )
-                        return
+            orig_f = getattr(func, "__func__", func)
+            sig = inspect.signature(orig_f)
+            params = list(sig.parameters.values())[3:]
+            
+            kwargs = {}
+            mandatory = [p for p in params if p.default in (inspect.Parameter.empty, None)]
+            words = args_str.split(maxsplit=len(params)-1) if args_str and params else []
+            reply_text = await wrapped.get_reply_text()
 
-                orig_f = getattr(func, "__func__", func)
-                sig = inspect.signature(orig_f)
-                params = list(sig.parameters.values())[3:]
-                
-                kwargs = {}
-                mandatory = [p for p in params if p.default in (inspect.Parameter.empty, None)]
-                words = args_str.split(maxsplit=len(params)-1) if args_str and params else []
-                reply_text = await wrapped.get_reply_text()
+            if len(words) == len(mandatory) and not reply_text:
+                for i, p in enumerate(mandatory): kwargs[p.name] = words[i]
+            else:
+                for i, word in enumerate(words):
+                    if i < len(params): kwargs[params[i].name] = word
 
-                if len(words) == len(mandatory) and not reply_text:
-                    for i, p in enumerate(mandatory): kwargs[p.name] = words[i]
-                else:
-                    for i, word in enumerate(words):
-                        if i < len(params): kwargs[params[i].name] = word
+            if reply_text:
+                for p in reversed(mandatory):
+                    if p.name not in kwargs:
+                        kwargs[p.name] = reply_text
+                        break
 
-                if reply_text:
-                    for p in reversed(mandatory):
-                        if p.name not in kwargs:
-                            kwargs[p.name] = reply_text
-                            break
+            try:
+                for p in mandatory:
+                    if p.name not in kwargs or kwargs[p.name] is None:
+                        raise UsageError()
 
+                v_func = validate_call(func, config=pd_config)
+                token = self.mx.interface._current_event.set(wrapped)
                 try:
-                    for p in mandatory:
-                        if p.name not in kwargs or kwargs[p.name] is None:
-                            raise UsageError()
+                    await v_func(self.mx.interface, wrapped, **kwargs)
+                finally:
+                    self.mx.interface._current_event.reset(token)
+                return 
 
-                    v_func = validate_call(func, config=pd_config)
-                    token = self.mx.interface._current_event.set(wrapped)
-                    try:
-                        await v_func(self.mx.interface, wrapped, **kwargs)
-                    finally:
-                        self.mx.interface._current_event.reset(token)
-                    return 
+            except (ValidationError, UsageError):
+                raw_doc = getattr(orig_f, "__doc__", "") or ""
+                usage = raw_doc.strip().splitlines()[0].split("|")[0].strip()
+                clean = usage.replace("<", "&lt;").replace(">", "&gt;")
 
-                except (ValidationError, UsageError):
-                    raw_doc = getattr(orig_f, "__doc__", "") or ""
-                    usage = raw_doc.strip().splitlines()[0].split("|")[0].strip()
-                    clean = usage.replace("<", "&lt;").replace(">", "&gt;")
-
-                    await wrapped.reply(f"ℹ️ <b>Usage:</b> <code>{prefix}{cmd_name} {clean}</code>")
-                    return
-                except Exception as e:
-                    logger.exception(f"Command execution error: {cmd_name}")
-                    await wrapped.reply(f"❌ <b>Error:</b> <code>{e}</code>")
-                    return
+                await wrapped.reply(f"ℹ️ <b>Usage:</b> <code>{prefix}{cmd_name} {clean}</code>")
+                return
+            except Exception as e:
+                logger.exception(f"Command execution error: {cmd_name}")
+                await wrapped.reply(f"❌ <b>Error:</b> <code>{e}</code>")
+                return
 
         for mod in self.mx.active_modules.values():
             if not mod.enabled or not getattr(mod, "_is_ready", False):
