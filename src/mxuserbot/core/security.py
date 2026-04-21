@@ -200,10 +200,10 @@ class SekaiSecurity:
         except SyntaxError as e:
             raise PermissionError("Syntax Error")
             
-        if "getattr" in source_str:
-            for word in self.all_forbidden:
-                if f'"{word}"' in source_str or f"'{word}'" in source_str:
-                    raise PermissionError(f"getattr bypass attempt for '{word}'")
+        # if "getattr" in source_str:
+        #     for word in self.all_forbidden:
+        #         if f'"{word}"' in source_str or f"'{word}'" in source_str:
+        #             raise PermissionError(f"getattr bypass attempt for '{word}'")
 
 
     def is_owner(
