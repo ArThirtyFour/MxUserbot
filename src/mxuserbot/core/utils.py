@@ -29,7 +29,7 @@ from mautrix.types import (
 )
 from mautrix.util.formatter import parse_html
 
-RPC_NAMESPACE = "com.ip-logger.msc4320.rpc"
+RPC_NAMESPACE = "com.mx.userbot.msc4320.rpc"
 
 
 
@@ -730,29 +730,3 @@ async def safe_remove(filename: str):
     path = _get_safe_path(filename)
     if path.exists():
         os.remove(path)
-
-async def ffmpeg_run(args: List[str]) -> bool:
-    """
-    Универсальный запуск FFmpeg. 
-    Автоматически проверяет все пути в аргументах на безопасность.
-    """
-    safe_args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
-    
-    # Сканируем аргументы: если это путь, прогоняем через фильтр
-    for arg in args:
-        if "/" in arg or "\\" in arg or "." in arg:
-            try:
-                # Если аргумент похож на путь, делаем его безопасным
-                safe_args.append(str(_get_safe_path(arg)))
-            except:
-                safe_args.append(arg) # Если не путь (например, кодек), оставляем
-        else:
-            safe_args.append(arg)
-
-    process = await asyncio.create_subprocess_exec(
-        *safe_args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    await process.wait()
-    return process.returncode == 0
