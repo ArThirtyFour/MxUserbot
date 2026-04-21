@@ -47,6 +47,8 @@ class Config(BaseFileConfig):
 
 class MXBotInterface:
     """A secure wrapper to be passed to modules."""
+
+    _current_event = contextvars.ContextVar("current_event")
     
 
     def __init__(self, bot: 'MXUserBot'):
