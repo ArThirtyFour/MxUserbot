@@ -108,7 +108,7 @@ class HelperModule(loader.Module):
 
             for mod in sorted_modules:
                 name = mod.Meta.name if hasattr(mod, "Meta") else mod.__class__.__name__
-                desc = mod.Meta._cls_doc if hasattr(mod, "Meta") else self.strings["no_desc"]
+                desc = mod.Meta.description if hasattr(mod, "Meta") else self.strings["no_desc"]
                 
                 if hasattr(mod, "commands") and mod.commands:
                     cmds = ", ".join([f"<code>{c}</code>" for c in mod.commands.keys()])
@@ -133,7 +133,7 @@ class HelperModule(loader.Module):
 
         if target_mod:
             name = target_mod.Meta.name if hasattr(target_mod, "Meta") else target_mod.__class__.__name__
-            desc = target_mod.Meta._cls_doc if hasattr(target_mod, "Meta") else self.strings["no_desc"]
+            desc = target_mod.Meta.description if hasattr(target_mod, "Meta") else self.strings["no_desc"]
             
             msg = self.strings["module_info"].format(name=name, desc=desc)
 

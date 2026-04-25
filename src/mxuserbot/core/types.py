@@ -181,7 +181,7 @@ class Module(ABC):
             self._commands[cmd_name] = getattr(self, func.__name__)
 
     def _help(self):
-        return self.strings.get("_cls_doc", "No description available")
+        return self.strings.get("description", "No description available")
 
     @property
     def commands(self):
