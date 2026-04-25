@@ -255,10 +255,16 @@ class MXUserBot(Program):
         
         app = FastAPI(title="Sekai Bot API")
         setup_routes(app, self, self.auth_completed)
-        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="error"))
-        server.install_signal_handlers = lambda: None
-        asyncio.create_task(server.serve())
-        self.log.info(f"🌐 | API running: http://{server.config.host}:{server.config.port}")
+        self.server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="error"))
+        self.server.install_signal_handlers = lambda: None
+        async def _serve_api():
+            try:
+                await self.server.serve()
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                pass
+                
+        self.api_task = asyncio.create_task(_serve_api())
+        self.log.info(f"🌐 | API running: http://{self.server.config.host}:{self.server.config.port}")
 
 
     async def setup_userbot(
@@ -344,12 +350,36 @@ class MXUserBot(Program):
 
         except Exception as e:
             raise e
+        
+    async def stop(
+        self
+    ) -> None:
+            self.log.info("Shutting down gracefully...")
+
+            if self.client:
+                self.client.stop()
+
+            if hasattr(self, "server"):
+                self.server.should_exit = True
+                await asyncio.sleep(0.5)
+
+            if hasattr(self, "crypto_db"):
+                await self.crypto_db.stop()
+
+            if self._db and hasattr(self._db, "_sw"):
+                try:
+                    await self._db._sw.engine.dispose() 
+                except:
+                    pass
+
+            await super().stop()
 
 
 if __name__ == "__main__":
+    bot = MXUserBot()
     try:
-        MXUserBot().run()
+        bot.run()
     except KeyboardInterrupt:
-        sys.exit(0)
+        pass
     except Exception:
         traceback.print_exc()
