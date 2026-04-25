@@ -16,16 +16,15 @@ from mautrix.api import Method
 from mautrix.crypto.attachments import encrypt_attachment
 from mautrix.types import (
     EncryptedEvent,
-    EncryptedFile,
     EventType,
     Format,
+    RoomTagInfo,
     ImageInfo,
     MediaMessageEventContent,
     MessageEvent,
     MessageType,
     RelatesTo,
     RelationType,
-    RoomID,
     TextMessageEventContent,
     ThumbnailInfo,
 )
@@ -216,13 +215,45 @@ async def get_args_raw(mx, event) -> str:
     return cmd_args
 
 
+async def pin_room(
+        mx,
+        room_id
+) -> bool:
+    try:
+        await mx.client.set_room_tag(
+            room_id,
+            "m.favorite",
+            RoomTagInfo(
+                order=0.0
+            )
+        )
+        return True
+    except Exception as e:
+        raise e
+
+
+async def unpin_room(
+        mx,
+        room_id
+) -> bool:
+    try:
+        await mx.client.remove_room_tag(
+            room_id,
+            "m.favorite"
+        )
+        return True
+    except Exception as e:
+        raise e
+
+
 async def pin(mx, room_id: str, event_id: str, unpin: bool = False):
 
     try:
         try:
             current_state = await mx.client.get_state_event(room_id, EventType.ROOM_PINNED_EVENTS)
             pinned = current_state.get("pinned", []) if current_state else []
-        except Exception:
+        except Exception as e:
+            print(e)
             pinned = []
 
         if unpin:
