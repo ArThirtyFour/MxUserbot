@@ -118,7 +118,7 @@ async def get_public_url(port: int):
             preexec_fn=os.setsid
         )
         
-        timeout = 30 
+        timeout = 10 
         start_time = time.time()
         while time.time() - start_time < timeout:
             if os.path.exists(localhost_run_output_file):
