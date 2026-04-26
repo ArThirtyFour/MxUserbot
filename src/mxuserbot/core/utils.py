@@ -71,7 +71,7 @@ async def decrypt_event(mx, event_to_decrypt: EncryptedEvent, context_event: Mes
 
     if not from_devices:
         if context_event:
-            await answer(mx, "❌ <b>Decryption failed:</b> No trusted devices found to ask for keys.", event=context_event)
+            await answer(mx, "❌ | <b>Decryption failed:</b> No trusted devices found to ask for keys.", event=context_event)
             return
         return None
 
@@ -167,10 +167,8 @@ async def get_reply_text(mx, event: MessageEvent) -> str | None | bool:
         await answer(mx, text=f"❌ <b>Не удалось скачать сообщение:</b> {e}", event=event)
         return None
         
-    if isinstance(replied_event, EncryptedEvent):
-        return await decrypt_event(mx, replied_event, context_event=event)
-    else:
-        return getattr(replied_event.content, "body", "")
+
+    return getattr(replied_event.content, "body", "")
 
 
 async def get_args_raw(mx, event) -> str:
@@ -199,10 +197,8 @@ async def get_args_raw(mx, event) -> str:
         if relates and getattr(relates, "in_reply_to", None):
             replied_event = await mx.client.get_event(room_id=event.room_id, event_id=relates.in_reply_to.event_id)
 
-            if isinstance(replied_event, EncryptedEvent):
-                reply_text = await decrypt_event(mx, replied_event, context_event=None)
-            else:
-                reply_text = getattr(replied_event.content, "body", None)
+
+            reply_text = getattr(replied_event.content, "body", None)
             
             if reply_text:
                 reply_text = reply_text.strip()
