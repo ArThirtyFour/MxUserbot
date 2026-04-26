@@ -21,6 +21,7 @@ class ShellModule(loader.Module):
         "error": "<b>❌ | Error executing command:</b><br><pre>{}</pre>",
         "no_command": "<b>⚠️ | Please provide a command to execute</b>",
         "timeout": "<b>⏱️ | Command execution timeout (60s)</b>",
+        "sudo_warning": "<b>⚠️ | Команда содержит sudo. Если нужен пароль - настройте NOPASSWD в visudo для этого пользователя.</b>",
     }
 
     @loader.command()
@@ -33,6 +34,10 @@ class ShellModule(loader.Module):
         if not args:
             await utils.answer(mx, self.strings.get("no_command"))
             return
+        if 'sudo ' in args or args.startswith('sudo '):
+            if '-n' not in args:
+                await utils.answer(mx, self.strings.get("sudo_warning"))
+                return
         
         await utils.answer(mx, self.strings.get("executing"))
         
@@ -40,8 +45,11 @@ class ShellModule(loader.Module):
             process = await asyncio.create_subprocess_shell(
                 args,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE
             )
+
+            process.stdin.close()
             
             try:
                 stdout, stderr = await asyncio.wait_for(
