@@ -30,10 +30,12 @@ createApp({
                 });
                 const data = await res.json();
                 result.ok = res.ok;
-                result.msg = res.ok ? (t('session_initialized') || 'Success') : (data.detail || t('result_failed'));
+                result.msgKey = res.ok ? 'session_initialized' : null;
+                result.msg = res.ok ? t('session_initialized') : (data.detail || t('result_failed'));
                 view.value = 'result';
             } catch (e) {
                 result.ok = false;
+                result.msgKey = 'server_unreachable';
                 result.msg = t('server_unreachable');
                 view.value = 'result';
             }
@@ -42,6 +44,7 @@ createApp({
 
         const terminate = () => {
             result.ok = false;
+            result.msgKey = 'session_terminated';
             result.msg = t('session_terminated');
             view.value = 'result';
         };

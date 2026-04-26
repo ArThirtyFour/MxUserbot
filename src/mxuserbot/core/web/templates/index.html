@@ -79,10 +79,10 @@
                 <h1 :class="['text-3xl font-bold mb-4 mt-4', result.ok ? 'text-emerald-400' : 'text-rose-400']">
                     {{ result.ok ? t('result_success') : t('result_failed') }}
                 </h1>
-                <p class="text-[#a1a1aa] text-sm mb-8 leading-relaxed">{{ result.msg }}</p>
+                <p class="text-[#a1a1aa] text-sm mb-8 leading-relaxed">{{ result.msgKey ? t(result.msgKey) : result.msg }}</p>
                 <div class="flex flex-col gap-4">
-                    <button v-if="result.ok" @click="goToPanel" class="w-full p-4 bg-emerald-900/80 text-emerald-50 border border-emerald-700/50 rounded-xl text-sm font-semibold transition-all">Go to Panel</button>
-                    <button v-else @click="view = 'login'" class="w-full p-3.5 bg-[#27272a] text-white rounded-xl text-sm font-semibold transition-all">Try Again</button>
+                    <button v-if="result.ok" @click="goToPanel" class="w-full p-4 bg-emerald-900/80 text-emerald-50 border border-emerald-700/50 rounded-xl text-sm font-semibold transition-all">{{ t('btn_go_to_panel') }}</button>
+                    <button v-else @click="view = 'login'" class="w-full p-3.5 bg-[#27272a] text-white rounded-xl text-sm font-semibold transition-all">{{ t('btn_try_again') }}</button>
                 </div>
             </div>
         </transition>
