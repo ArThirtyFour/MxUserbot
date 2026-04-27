@@ -128,7 +128,6 @@ async def get_public_url(port: int):
                     for line in lines:
                         if "tunneled with tls termination" in line:
                             url = line.split()[-1]
-                            print(url)
                             return url
             time.sleep(1) 
         print("⏰ Timeout reached, no URL found")

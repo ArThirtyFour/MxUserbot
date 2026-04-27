@@ -29,7 +29,9 @@
     "access_denied": "Access Denied",
     "session_terminated": "Session terminated.",
     "mxid_format_error": "Check Matrix ID format",
-    "server_unreachable": "Server unreachable"
+    "server_unreachable": "Server unreachable",
+    "session_initialized": "Session initialized. The userbot is now active.",
+    "btn_go_to_panel": "Go to Panel"
   },
   "ru": {
     "page_title": "MXUserbot | Инициализация сессии",
@@ -61,7 +63,9 @@
     "access_denied": "Доступ запрещён",
     "session_terminated": "Сессия завершена.",
     "mxid_format_error": "Проверьте формат Matrix ID",
-    "server_unreachable": "Сервер недоступен"
+    "server_unreachable": "Сервер недоступен",
+    "session_initialized": "Сессия инициализирована. Юзербот теперь активен.",
+    "btn_go_to_panel": "Перейти в панель"
   }
 }
 
